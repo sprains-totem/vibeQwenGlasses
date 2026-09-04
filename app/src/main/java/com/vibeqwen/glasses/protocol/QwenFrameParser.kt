@@ -1,14 +1,13 @@
 package com.vibeqwen.glasses.protocol
 
 /**
- * 398B 音频帧解析器（纯 Kotlin，可在 JVM 单测）。
+ * 395B (BLE L2CAP) / 398B (Classic RFCOMM) 音频帧解析器（纯 Kotlin，可在 JVM 单测）。
  *
- * 要点（docs/PROTOCOL.md §5 / §9.1）：
- * - 音频通道 L2CAP CID 是【动态】的（0x0047 / 0x0048 因连接而异），
- *   因此必须按魔数头 `87 EF 12 03 07 01 86 08` 全局匹配，而不是依赖通道号。
- * - 帧布局：8B 魔数 + 1B 序号 + 4B 填充 + 384B PCM(16bit LE/16000Hz/单声道) + 1B 填充 = 398B
+ * 要点（真机抓包实测确认）：
+ * - BLE L2CAP 格式：6B 魔数 (89 01 07 01 86 08) + 1B 序号 + 4B 填充 + 384B PCM = 395B
+ * - 经典蓝牙格式：8B 魔数 (87 EF 12 03 07 01 86 08) + 1B 序号 + 4B 填充 + 384B PCM + 1B 尾部 = 398B
  * - 容忍：帧跨 socket read 分片、多帧粘包、序号跳变/回绕（不丢弃，仅统计）。
- * - 提取规则：取 [13..396] 共 384B 为 PCM，尾部 1B 丢弃。
+ * - 提取规则：提取 384B 为 16kHz 16bit 单声道 PCM。
  */
 class QwenFrameParser {
 
@@ -16,6 +15,13 @@ class QwenFrameParser {
     data class AudioFrame(
         val seq: Int,
         val pcm: ByteArray,
+    )
+
+    private data class MatchResult(
+        val idx: Int,
+        val frameSize: Int,
+        val headerSize: Int,
+        val seqOffset: Int,
     )
 
     private var buf = ByteArray(0)
@@ -44,35 +50,36 @@ class QwenFrameParser {
         buf = if (buf.isEmpty()) data.copyOf() else buf + data
 
         val out = ArrayList<AudioFrame>()
-        var idx = indexOfMagic(head)
-        while (idx >= 0) {
+        var match = findNextMagic(head)
+        while (match != null) {
+            val idx = match.idx
             // 不足一帧长度：保留等待后续数据
-            if (buf.size - idx < QwenConstants.AUDIO_FRAME_SIZE) break
+            if (buf.size - idx < match.frameSize) break
 
-            // 序号（帧内第 9 字节）
-            val seq = buf[idx + 8].toInt() and 0xFF
+            // 序号
+            val seq = buf[idx + match.seqOffset].toInt() and 0xFF
             if (lastSeq >= 0) {
                 val expected = (lastSeq + 1) and 0xFF
                 if (seq != expected) seqJumps++
             }
             lastSeq = seq
 
-            // 提取 PCM：跳过 13B 帧头，取 384B，尾部 1B 丢弃
+            // 提取 PCM：跳过帧头，取 384B
             val pcm = buf.copyOfRange(
-                idx + QwenConstants.AUDIO_HEADER_SIZE,
-                idx + QwenConstants.AUDIO_HEADER_SIZE + QwenConstants.AUDIO_PCM_SIZE
+                idx + match.headerSize,
+                idx + match.headerSize + QwenConstants.AUDIO_PCM_SIZE
             )
             out.add(AudioFrame(seq, pcm))
             totalFrames++
 
-            val consumed = idx + QwenConstants.AUDIO_FRAME_SIZE
+            val consumed = idx + match.frameSize
             droppedBytes += (idx - head) // 仅帧前的残余（垃圾/其他协议文本）计入丢弃
             head = consumed
-            idx = indexOfMagic(head)
+            match = findNextMagic(head)
         }
 
-        // 长时间未匹配魔数（例如一段无音频的 AT 协商流）：防缓冲无限增长，丢弃超长残余
-        if (idx < 0 && buf.size - head > QwenConstants.AUDIO_FRAME_SIZE * 16) {
+        // 长时间未匹配魔数（例如一段无音频的文本）：防缓冲无限增长，丢弃超长残余
+        if (match == null && buf.size - head > QwenConstants.AUDIO_FRAME_SIZE_CLASSIC * 16) {
             droppedBytes += (buf.size - head)
             head = buf.size
         }
@@ -89,21 +96,51 @@ class QwenFrameParser {
         droppedBytes = 0
     }
 
-    private fun indexOfMagic(from: Int): Int {
-        val magic = QwenConstants.AUDIO_MAGIC
+    private fun findNextMagic(from: Int): MatchResult? {
+        val magicBle = QwenConstants.AUDIO_MAGIC_BLE
+        val magicClassic = QwenConstants.AUDIO_MAGIC_CLASSIC
         var i = from
-        val limit = buf.size - magic.size
+        val limit = buf.size - magicBle.size
+
         while (i <= limit) {
-            var ok = true
-            for (j in magic.indices) {
-                if (buf[i + j] != magic[j]) {
-                    ok = false
+            // 先尝试匹配 6 字节 BLE 魔数 (89 01 07 01 86 08)
+            var okBle = true
+            for (j in magicBle.indices) {
+                if (buf[i + j] != magicBle[j]) {
+                    okBle = false
                     break
                 }
             }
-            if (ok) return i
+            if (okBle) {
+                return MatchResult(
+                    idx = i,
+                    frameSize = QwenConstants.AUDIO_FRAME_SIZE_BLE,
+                    headerSize = QwenConstants.AUDIO_HEADER_SIZE_BLE,
+                    seqOffset = 6
+                )
+            }
+
+            // 再尝试匹配 8 字节经典魔数 (87 EF 12 03 07 01 86 08)
+            if (i <= buf.size - magicClassic.size) {
+                var okClassic = true
+                for (j in magicClassic.indices) {
+                    if (buf[i + j] != magicClassic[j]) {
+                        okClassic = false
+                        break
+                    }
+                }
+                if (okClassic) {
+                    return MatchResult(
+                        idx = i,
+                        frameSize = QwenConstants.AUDIO_FRAME_SIZE_CLASSIC,
+                        headerSize = QwenConstants.AUDIO_HEADER_SIZE_CLASSIC,
+                        seqOffset = 8
+                    )
+                }
+            }
+
             i++
         }
-        return -1
+        return null
     }
 }

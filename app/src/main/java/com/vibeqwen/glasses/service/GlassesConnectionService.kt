@@ -212,44 +212,64 @@ class GlassesConnectionService : Service() {
         }
         updateNotification()
         com.vibeqwen.glasses.protocol.QwenFramer.resetSeq()
+        handshake = null
 
         scope.launch {
-            // 1. 发送 GCSP 版本协商请求 (08 00 00 00 05 47 43 00 01 02)
-            val negReq = com.vibeqwen.glasses.protocol.QwenFramer.versionNegFrame(2)
+            // 1. 发送 GCSP 版本协商请求 (08 00 00 00 05 47 43 00 00 01)
+            val negReq = com.vibeqwen.glasses.protocol.QwenFramer.versionNegFrame(1)
             com.vibeqwen.glasses.util.LogCollector.h("发送 GCSP 版本协商请求: " + negReq.joinToString("") { "%02X".format(it) })
             transport?.write(negReq)
-            delay(1000)
+            delay(200)
 
-            // 2. 发送 node 初始化帧 (官方 10B 帧头 + CRC16 封装)
-            com.vibeqwen.glasses.util.LogCollector.h("发送 node 初始化...")
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.nodeInitFrame())
-            delay(300)
-
-            // 3. 启动握手状态机
-            handshake = QwenHandshake(
-                scope = scope,
-                send = { text ->
-                    com.vibeqwen.glasses.util.LogCollector.h("←发送(GCSP帧): ${text.take(120)}")
-                    transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(text))
-                },
-            ).also { h ->
-                h.onReady = {
-                    com.vibeqwen.glasses.util.LogCollector.c("握手完成 → READY")
-                    publish { st -> st.copy(connection = ConnectionState.READY, message = "已就绪，可开始录音") }
-                    updateNotification()
-                    scope.launch {
-                        transport?.openAudioChannel(transportListener)
-                    }
+            // 2. 注册鉴权成功回调
+            com.vibeqwen.glasses.protocol.GmaProtocolHandler.onAuthSuccess = {
+                scope.launch {
+                    com.vibeqwen.glasses.util.LogCollector.c("鉴权成功，发送空 node 初始化与 CBOR 系统信息...")
+                    transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.emptyNodeInitFrame())
+                    delay(100)
+                    val cbor = com.vibeqwen.glasses.protocol.QwenFramer.cborSystemInfoFrame()
+                    transport?.write(cbor)
+                    delay(150)
+                    startJsonHandshake()
                 }
-                h.onError = { err ->
-                    com.vibeqwen.glasses.util.LogCollector.e("握手失败: $err")
-                    publish {
-                        it.copy(connection = ConnectionState.ERROR, lastError = err, message = "握手失败：$err")
-                    }
-                    updateNotification()
-                }
-                h.start()
             }
+
+            // 3. 发送 GMA 快速鉴权挑战帧 (0x10)
+            val challenge = com.vibeqwen.glasses.protocol.QwenFramer.fastAuthChallenge()
+            com.vibeqwen.glasses.util.LogCollector.h("发送 GMA 快速鉴权挑战 (0x10): " + challenge.joinToString("") { "%02X".format(it) })
+            transport?.write(challenge)
+
+            // 4. 超时安全保护：若 2.5 秒内未完成快速鉴权（如老固件），直接启动 JSON 握手
+            delay(2500)
+            if (handshake == null) {
+                com.vibeqwen.glasses.util.LogCollector.h("未收到 0x13 鉴权成功通知，直接启动 JSON 握手")
+                startJsonHandshake()
+            }
+        }
+    }
+
+    private fun startJsonHandshake() {
+        if (handshake != null) return
+        handshake = QwenHandshake(
+            scope = scope,
+            send = { text ->
+                com.vibeqwen.glasses.util.LogCollector.h("←发送(GCSP帧): ${text.take(120)}")
+                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(text))
+            },
+        ).also { h ->
+            h.onReady = {
+                com.vibeqwen.glasses.util.LogCollector.c("握手完成 → READY")
+                publish { st -> st.copy(connection = ConnectionState.READY, message = "已就绪，可开始录音") }
+                updateNotification()
+            }
+            h.onError = { err ->
+                com.vibeqwen.glasses.util.LogCollector.e("握手失败: $err")
+                publish {
+                    it.copy(connection = ConnectionState.ERROR, lastError = err, message = "握手失败：$err")
+                }
+                updateNotification()
+            }
+            h.start()
         }
     }
 

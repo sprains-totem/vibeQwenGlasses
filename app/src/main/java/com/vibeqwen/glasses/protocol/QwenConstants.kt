@@ -20,15 +20,31 @@ object QwenConstants {
     const val CID_CONTROL_OUT = 0x004A
 
     // ── 音频帧 ──
-    /** 帧头魔数（静态观测值） */
-    val AUDIO_MAGIC = byteArrayOf(
+    /** BLE L2CAP 帧头魔数 (395B 帧长，真实抓包实测确认) */
+    val AUDIO_MAGIC_BLE = byteArrayOf(
+        0x89.toByte(), 0x01.toByte(), 0x07.toByte(), 0x01.toByte(),
+        0x86.toByte(), 0x08.toByte()
+    )
+    /** 经典蓝牙/兼容帧头魔数 (398B 帧长) */
+    val AUDIO_MAGIC_CLASSIC = byteArrayOf(
         0x87.toByte(), 0xEF.toByte(), 0x12.toByte(), 0x03.toByte(),
         0x07.toByte(), 0x01.toByte(), 0x86.toByte(), 0x08.toByte()
     )
-    /** 单帧总长 */
-    const val AUDIO_FRAME_SIZE = 398
+    /** 默认静态魔数（保持向后兼容） */
+    val AUDIO_MAGIC = AUDIO_MAGIC_CLASSIC
+
+    /** BLE 单帧总长 (11B 头部 + 384B PCM) */
+    const val AUDIO_FRAME_SIZE_BLE = 395
+    const val AUDIO_HEADER_SIZE_BLE = 11
+
+    /** 经典蓝牙单帧总长 (13B 头部 + 384B PCM + 1B 尾部) */
+    const val AUDIO_FRAME_SIZE_CLASSIC = 398
+    const val AUDIO_HEADER_SIZE_CLASSIC = 13
+
+    /** 单帧总长（默认向后兼容） */
+    const val AUDIO_FRAME_SIZE = AUDIO_FRAME_SIZE_CLASSIC
     /** 帧头长度（魔数8 + 序号1 + 填充4） */
-    const val AUDIO_HEADER_SIZE = 13
+    const val AUDIO_HEADER_SIZE = AUDIO_HEADER_SIZE_CLASSIC
     /** 帧尾填充字节数 */
     const val AUDIO_TAIL_SIZE = 1
     /** 有效 PCM 字节数 / 帧 */
@@ -76,17 +92,23 @@ object QwenConstants {
     /** 音频通道 UUID 尝试顺序（HFP 通道在抓包中承载 AT 协商 + 音频帧） */
     val DEFAULT_AUDIO_UUIDS = listOf(UUID_OFFICIAL_BIND, UUID_BES_DATA_03FD, UUID_HFAG_111E, UUID_HSP_1108, UUID_SPP_1101)
 
-    // ── 设备身份常量（抓包确认） ──
+    // ── 设备身份常量（真机抓包与 shared_prefs 提取） ──
     const val DEVICE_ODM = "AILABS_SG02_QW"
     const val DEVICE_MODEL = "AILABS_SG02_QW"
     const val DEVICE_BRAND = "Quark_glasses"
     const val DEVICE_TYPE = "bes2800"
-    /** 设备 SN：type:1103 认证用（眼镜 SynchronizeState 上报值） */
+    /** Product ID (8665 = 0x21D9) */
+    const val PRODUCT_ID = 8665
+    /** GMA 设备 UUID (D5A74C04894A4E70C2AE0BDC687904FE) */
+    const val DEVICE_UUID = "D5A74C04894A4E70C2AE0BDC687904FE"
+    /** GMA 鉴权 BLE 密钥 */
+    const val DEVICE_BLE_KEY = "19f2bb2b7bff8e994b7e244f65a989c7"
+    /** 设备 SN */
     const val DEVICE_SN = "5200002612240211A002181"
-    /** 眼镜蓝牙 MAC（实测：Qwen Glasses G1191C） */
+    /** 眼镜蓝牙 MAC（实测：Qwen Glasses G1 191C） */
     const val GLASSES_MAC = "C4:D7:DC:40:19:1C"
     /** 眼镜设备名（实测） */
-    const val GLASSES_NAME = "Qwen Glasses G1191C"
+    const val GLASSES_NAME = "Qwen Glasses G1 191C"
 
     // ── BLE 广播特征（官方 APP 逆向确认，2026-08-30 vibeADB 真机验证）──
     /** 官方 APP 扫描眼镜的 Service UUID: 0xFEB3（Alibaba 私有） */

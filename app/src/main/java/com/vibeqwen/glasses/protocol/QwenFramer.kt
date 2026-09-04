@@ -50,11 +50,75 @@ object QwenFramer {
         return crc and 0xFFFF
     }
 
-    /** 生成 GCSP 版本协商请求帧 (10 字节) */
-    fun versionNegFrame(maxVersion: Int = 2): ByteArray {
+    /** 生成 GCSP 版本协商请求帧 (10 字节，官方抓包严格一致) */
+    fun versionNegFrame(maxVersion: Int = 1): ByteArray {
         return byteArrayOf(
-            0x08, 0x00, 0x00, 0x00, 0x05, 0x47, 0x43, 0x00, 0x01, maxVersion.toByte()
+            0x08, 0x00, 0x00, 0x00, 0x05, 0x47, 0x43, 0x00, 0x00, 0x01
         )
+    }
+
+    /**
+     * 生成 GMA 快速鉴权挑战帧 (26 字节，命令 0x10)
+     * 手机向眼镜发起重连挑战，携带 16 字节随机数 RandomA
+     */
+    fun fastAuthChallenge(randomA: ByteArray = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }): ByteArray {
+        return ByteArray(26).apply {
+            this[0] = 0x18; this[1] = 0x00; this[2] = 0x01; this[3] = 0x00
+            this[4] = 0x15; this[5] = 0x00; this[6] = 0x00; this[7] = 0x00; this[8] = 0x00
+            this[9] = 0x10
+            System.arraycopy(randomA, 0, this, 10, 16)
+        }
+    }
+
+    /**
+     * 生成 GMA 快速鉴权确认帧 (11 字节，命令 0x12)
+     * 收到眼镜 0x11 回包后下发确认
+     */
+    fun fastAuthConfirm(): ByteArray {
+        return byteArrayOf(
+            0x09, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00, 0x01, 0x00, 0x12, 0x00
+        )
+    }
+
+    /**
+     * 会话空节点初始化帧（12 字节，包号 2，载荷 "{}"）
+     */
+    fun emptyNodeInitFrame(): ByteArray {
+        return byteArrayOf(
+            0x0a, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00, 0x02, 0x00, 0x03, 0x7b, 0x7d
+        )
+    }
+
+    /**
+     * 会话 CBOR 系统信息帧（146 字节，官方抓包严格一致）
+     */
+    fun cborSystemInfoFrame(peerMac: String = "55:55:55:55:55:55"): ByteArray {
+        val baos = ByteArrayOutputStream()
+        baos.write(byteArrayOf(0x90.toByte(), 0x00, 0x01, 0x00, 0x8d.toByte(), 0x08, 0x00, 0x03, 0x00, 0x01))
+        baos.write(0xbf)
+        baos.write("haddrType".toByteArray(Charsets.ISO_8859_1))
+        baos.write(0x02)
+        baos.write("eappId".toByteArray(Charsets.ISO_8859_1))
+        baos.write("ocom.alibaba.wowbosgAndroidhpeerAddrq".toByteArray(Charsets.ISO_8859_1))
+        baos.write(peerMac.toByteArray(Charsets.ISO_8859_1))
+        baos.write("dtime".toByteArray(Charsets.ISO_8859_1))
+        val ts = System.currentTimeMillis()
+        baos.write(byteArrayOf(
+            0x1B,
+            ((ts shr 56) and 0xFF).toByte(),
+            ((ts shr 48) and 0xFF).toByte(),
+            ((ts shr 40) and 0xFF).toByte(),
+            ((ts shr 32) and 0xFF).toByte(),
+            ((ts shr 24) and 0xFF).toByte(),
+            ((ts shr 16) and 0xFF).toByte(),
+            ((ts shr 8) and 0xFF).toByte(),
+            (ts and 0xFF).toByte()
+        ))
+        baos.write("jtimeOffset".toByteArray(Charsets.ISO_8859_1))
+        baos.write(byteArrayOf(0x1A, 0x01, 0xB7.toByte(), 0x74, 0x00))
+        baos.write("jtimeZoneIdmAsia/Shanghaigversion".toByteArray(Charsets.ISO_8859_1))
+        baos.write(byteArrayOf(0x01, 0xFF.toByte()))
+        return baos.toByteArray()
     }
 
     /** 重置帧序号 */

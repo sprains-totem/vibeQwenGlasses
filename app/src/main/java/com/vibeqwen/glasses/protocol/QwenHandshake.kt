@@ -30,7 +30,7 @@ class QwenHandshake(
     private val scope: CoroutineScope,
     /** 上行发送 JSON 文本给眼镜（线程安全） */
     private val send: suspend (String) -> Unit,
-    private val deviceSn: String = QwenConstants.DEVICE_SN,
+    private val deviceSn: String = QwenConstants.DEVICE_UUID,
     /** 严谨模式：超时未收到 attach_success 直接标 FAILED，严禁自欺欺人假就绪 */
     private val tolerateAttachTimeout: Boolean = false,
 ) {

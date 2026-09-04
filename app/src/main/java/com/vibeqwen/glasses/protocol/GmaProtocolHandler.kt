@@ -14,6 +14,9 @@ import java.nio.ByteOrder
  */
 object GmaProtocolHandler {
 
+    /** 鉴权成功回调 */
+    var onAuthSuccess: (() -> Unit)? = null
+
     /**
      * 尝试解析接收到的原始二进制包。
      * @return 如果是 GMA 二进制请求，返回对应的 ACK 应答包；否则返回 null
@@ -24,6 +27,47 @@ object GmaProtocolHandler {
         val hex = bytes.take(32).joinToString("") { "%02X".format(it) }
         LogCollector.log("GMA", "收到原始包 (${bytes.size}B): $hex")
 
+        // 0. GMA 快速鉴权协议响应 (0x11 设备随机数响应 -> 自动回复 0x12 确认帧)
+        if (bytes.size >= 26 && (bytes[9].toInt() and 0xFF) == 0x11) {
+            LogCollector.h("★ 收到眼镜 0x11 设备 RandomB 响应 (26B)")
+            val randomB = bytes.copyOfRange(10, 26)
+            LogCollector.h("  设备 RandomB: " + randomB.joinToString("") { "%02X".format(it) })
+            val confirmFrame = QwenFramer.fastAuthConfirm()
+            LogCollector.h("← 下发 0x12 快速鉴权确认包 (11B)")
+            return confirmFrame
+        }
+
+        // 0.1 GMA 鉴权成功通知 (0x13 0x00)
+        if (bytes.size >= 11 && (bytes[9].toInt() and 0xFF) == 0x13) {
+            val status = bytes[10].toInt() and 0xFF
+            if (status == 0) {
+                LogCollector.c("★★★★★ 眼镜上报 0x13 AUTH_SUCCESS (鉴权成功！) ★★★★★")
+                onAuthSuccess?.invoke()
+            } else {
+                LogCollector.e("眼镜上报 0x13 鉴权失败，状态码: $status")
+            }
+            return null
+        }
+
+        // 0.2 传统 0x15: 设备返回 HMAC 与 RandomB -> 自动回发 0x16 鉴权确认
+        if (bytes.size >= 58 && (bytes[9].toInt() and 0xFF) == 0x15) {
+            LogCollector.h("★ 收到眼镜 0x15 设备 HMAC 响应 (48B)")
+            val deviceHmac = bytes.copyOfRange(10, 42)
+            val randomB = bytes.copyOfRange(42, 58)
+            LogCollector.h("  设备 HMAC: " + deviceHmac.take(8).joinToString("") { "%02X".format(it) } + "...")
+            LogCollector.h("  设备 RandomB: " + randomB.joinToString("") { "%02X".format(it) })
+
+            // 构造 0x16 鉴权确认帧
+            val verifyResult = ByteArray(42).apply {
+                this[0] = 0x28; this[1] = 0x00; this[2] = 0x01; this[3] = 0x00
+                this[4] = 0x25; this[5] = 0x00; this[6] = 0x00; this[7] = 0x03; this[8] = 0x00
+                this[9] = 0x16
+                System.arraycopy(deviceHmac, 0, this, 10, 32)
+            }
+            LogCollector.h("← 下发 0x16 鉴权确认包 (42B)")
+            return verifyResult
+        }
+
         // 1. GCSP 版本协商应答 (0x0002) 或 请求 (0x0001)
         if (bytes.size >= 8 && bytes.contains(0x47.toByte()) && bytes.contains(0x43.toByte())) {
             val idx = bytes.indexOf(0x47.toByte())
@@ -31,10 +75,10 @@ object GmaProtocolHandler {
                 val opcode = ((bytes[idx + 2].toInt() and 0xFF) shl 8) or (bytes[idx + 3].toInt() and 0xFF)
                 val ver = bytes[idx + 4].toInt() and 0xFF
                 LogCollector.h("GCSP 协议握手帧: opcode=0x%04X, version=%d".format(opcode, ver))
-                // 如果眼镜在请求协商，回复版本 2 应答
+                // 如果眼镜在请求协商，回复版本 1 应答
                 if (opcode == 0x0001) {
                     return byteArrayOf(
-                        0x08, 0x00, 0x00, 0x00, 0x05, 0x47, 0x43, 0x00, 0x02, 0x02
+                        0x08, 0x00, 0x00, 0x00, 0x05, 0x47, 0x43, 0x00, 0x02, 0x01
                     )
                 }
                 return null

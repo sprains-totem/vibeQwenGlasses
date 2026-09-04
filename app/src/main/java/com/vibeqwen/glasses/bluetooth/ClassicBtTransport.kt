@@ -78,12 +78,24 @@ class ClassicBtTransport(
     private fun openL2capOrControl(): BluetoothSocket? {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             try {
-                val s = device.createL2capChannel(QwenConstants.L2CAP_PSM)
+                // 优先使用官方 APP 使用的 Insecure L2CAP 通道 (isSecured = false)
+                val s = device.createInsecureL2capChannel(QwenConstants.L2CAP_PSM)
                 s.connect()
-                Log.i(tag, "[control] L2CAP PSM=${QwenConstants.L2CAP_PSM} 连接成功")
+                Log.i(tag, "[control] Insecure L2CAP PSM=${QwenConstants.L2CAP_PSM} 连接成功")
+                com.vibeqwen.glasses.util.LogCollector.c("Insecure L2CAP PSM=${QwenConstants.L2CAP_PSM} 连接成功")
                 return s
             } catch (e: Exception) {
-                Log.w(tag, "[control] L2CAP PSM=${QwenConstants.L2CAP_PSM} 失败: ${e.message}，回退 RFCOMM")
+                Log.w(tag, "[control] Insecure L2CAP 失败: ${e.message}，尝试 Secure L2CAP")
+                try {
+                    val s = device.createL2capChannel(QwenConstants.L2CAP_PSM)
+                    s.connect()
+                    Log.i(tag, "[control] Secure L2CAP PSM=${QwenConstants.L2CAP_PSM} 连接成功")
+                    com.vibeqwen.glasses.util.LogCollector.c("Secure L2CAP PSM=${QwenConstants.L2CAP_PSM} 连接成功")
+                    return s
+                } catch (e2: Exception) {
+                    Log.w(tag, "[control] L2CAP PSM=${QwenConstants.L2CAP_PSM} 失败: ${e2.message}，回退 RFCOMM")
+                    com.vibeqwen.glasses.util.LogCollector.e("L2CAP 连接失败: ${e2.message}")
+                }
             }
         }
         return connectWithCandidates(controlCandidates, "control")

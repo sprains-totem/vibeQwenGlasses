@@ -66,13 +66,16 @@ object QwenCommands {
     /** support:true */
     fun support(): String = """{"support":true}"""
 
-    /** type:1103 SN 认证 */
-    fun snAuth(sn: String = QwenConstants.DEVICE_SN): String = buildJsonObject {
+    /** type:1103 设备 UUID / 凭据认证（官方抓包证实下发 deviceUuid） */
+    fun snAuth(uuid: String = QwenConstants.DEVICE_UUID): String = buildJsonObject {
         put("type", 1103)
         put("arg1", 1)
         put("arg2", 0)
-        put("data", sn)
+        put("data", uuid)
     }.toString()
+
+    /** 别名：设备 UUID 认证 */
+    fun deviceAuth(uuid: String = QwenConstants.DEVICE_UUID): String = snAuth(uuid)
 
     /** 手机通知眼镜挂载成功：{"code":1,"msg":"attach_success"}（官方抓包证实由手机发给眼镜） */
     fun attachSuccess(): String = """{"code":1,"msg":"attach_success"}"""

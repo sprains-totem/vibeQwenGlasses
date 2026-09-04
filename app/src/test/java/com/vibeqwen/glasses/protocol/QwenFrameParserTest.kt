@@ -111,4 +111,21 @@ class QwenFrameParserTest {
         val frames = parser.feed(ByteArray(1000) { it.toByte() })
         assertEquals(0, frames.size)
     }
+
+    @Test
+    fun `BLE L2CAP 395字节音频帧解析`() {
+        val parser = QwenFrameParser()
+        val f = ByteArray(QwenConstants.AUDIO_FRAME_SIZE_BLE)
+        QwenConstants.AUDIO_MAGIC_BLE.copyInto(f, 0)
+        f[6] = 0xE8.toByte()
+        // 7..10 为 0
+        // 11..394 为 PCM
+        f[11] = 0x12
+        f[12] = 0x34
+        val frames = parser.feed(f)
+        assertEquals(1, frames.size)
+        assertEquals(0xE8, frames[0].seq)
+        assertEquals(384, frames[0].pcm.size)
+        assertEquals(0x3412, ((frames[0].pcm[1].toInt() and 0xFF) shl 8) or (frames[0].pcm[0].toInt() and 0xFF))
+    }
 }
