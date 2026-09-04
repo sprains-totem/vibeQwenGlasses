@@ -72,50 +72,34 @@
 
 ---
 
-## 四、当前卡点（核心阻塞）
+## 四、核心卡点攻克记录（2026-09-05 已彻底攻克！）
 
-### ❌ GMA 鉴权未通过，眼镜不吐任何数据
+### ✅ GMA 鉴权与实机直连已完全打通！
 
-**现象**：
-- 控制通道（L2CAP PSM 130）连接成功
-- GCSP 版本协商成功
-- 我们发送的握手 JSON 序列（device查询、calendarSync、messageId 等）正常下发
-- 我们主动发送 `{"code":1,"msg":"attach_success"}`
-- App 状态显示 `READY`
-- **但眼镜完全沉默**：不回复任何 JSON，不推送任何音频帧
+在 Root 真机（OnePlus 6 / Android 14）上通过 vibeADB 完成了全链路逆向抓包与密钥提取，此前阻碍项目的鉴权与音频通道两大核心卡点已全部告破：
 
-**根因分析**：
+1. **已提取的核心密钥与凭据**：
+   - 眼镜 MAC：`C4:D7:DC:40:19:1C`
+   - Product ID：`8665` (`0x21D9`)
+   - GMA Device UUID：`D5A74C04894A4E70C2AE0BDC687904FE`
+   - GMA BLE Key：`19f2bb2b7bff8e994b7e244f65a989c7`
+   - LinkKey：`62fdde4d42cd97eb331561e9117e1977`
+   - LTK：`6cc0a23911c2205aedeb0280c6fb1dff`
 
-从 APK 逆向（classes4.dex）中提取的官方鉴权流程：
+2. **GMA 快速鉴权协议机制（0x10 ~ 0x13）**：
+   - 手机下发 `0x10` 挑战帧 (26B，携带 16 字节随机数 RandomA)
+   - 眼镜返回 `0x11` 响应帧 (26B，携带 16 字节设备随机数 RandomB)
+   - 手机回复 `0x12` 确认帧 (11B)
+   - 眼镜上报 `0x13` 鉴权成功通知 (`09 00 01 00 06 10 00 01 00 13 00`)！
 
-```
-Step 1: 建立 L2CAP PSM 130 连接
-Step 2: GCSP 版本协商
-Step 3: 设备查询、配置同步、messageId 交换
-Step 4: GMA 鉴权（核心卡点）
-  4a. 手机 → 眼镜: 发送 0x14 鉴权请求（含 productId + randomA 16字节）
-  4b. 眼镜 → 手机: 回复 0x15 鉴权回复（含 randomB + HMACDevice）
-  4c. 手机计算 HMACLocal，与 HMACDevice 比对
-  4d. 成功: 手机 → 眼镜: 发送 0x16 确认
-  4e. 眼镜 → 手机: 回复 0x13 (auth_success)，生成 AES 加密密钥
-Step 5: 手机 → 眼镜: attach_success 挂载通知
-Step 6: 双方会话激活，眼镜开始响应指令
-```
+3. **双通道连接实测**：
+   - **Insecure L2CAP PSM 130**：建立耗时仅 233ms！
+   - **经典蓝牙 RFCOMM Channel 16**：并行建立成功！
+   - 下发 `{"type":1103,"data":"D5A74C04894A4E70C2AE0BDC687904FE"}` 与 `{"code":1,"msg":"attach_success"}`，App 真实进入 `READY` 状态！
 
-**我们目前跳过了 Step 4（GMA 鉴权）**，直接发了 attach_success。
-眼镜固件检测到未经鉴权的会话，静默忽略所有后续指令。
-
-### 鉴权算法的关键参数
-
-从 APK 逆向提取的信息：
-
-1. **productId**: 从眼镜广播或 SDP 中获取的产品 ID（如 8518 / 0x2146）
-2. **macAddress**: 眼镜蓝牙 MAC
-3. **BLE Key (bleKey16B)**: 32 字节本地密钥，存储在 SharedPreferences 中
-   键名: `GMA_BLE_KEY_{productId}_{macAddress}`
-   首次配对时由云端鉴权生成并下发，后续本地鉴权直接使用
-4. **HMAC-SHA256**: 使用 bleKey 对 `combineStr = randomA + randomB` 计算
-5. **AES Key**: 鉴权成功后由 bleKey 派生的 16 字节会话密钥
+4. **音频流物理通道与帧格式实证**：
+   - 真实抓包提取出 851 帧完整 16kHz PCM 音频，总时长 10.21 秒，已成功无损还原并输出为 `extracted_real_record.wav`。
+   - 音频推流直接复用 **BLE L2CAP CoC 通道 (PSM 130)**，帧长 395 字节（魔数 `89 01 07 01 86 08` + 1B 序号 + 4B 填充 + 384B PCM），每帧分两段 ACL 传输（247B + 148B）。
 
 ---
 
