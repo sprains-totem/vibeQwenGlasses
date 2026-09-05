@@ -50,76 +50,83 @@ object QwenFramer {
         return crc and 0xFFFF
     }
 
-    /** 生成 GCSP 版本协商请求帧 (10 字节，官方抓包严格一致) */
+    /**
+     * 生成 GCSP 版本协商请求帧 (8 字节)
+     * 注意：Android BluetoothSocket (LE-CoC) 在底层 write() 时会自动前置 2 字节 SDU 长度 (0x0008)
+     * 因此 Java 应用层写入的有效载荷为 8 字节：
+     * 00 00 05 47 43 00 00 01
+     */
     fun versionNegFrame(maxVersion: Int = 1): ByteArray {
         return byteArrayOf(
-            0x08, 0x00, 0x00, 0x00, 0x05, 0x47, 0x43, 0x00, 0x00, 0x01
+            0x00, 0x00, 0x05, 0x47, 0x43, 0x00, 0x00, (maxVersion and 0xFF).toByte()
         )
     }
 
     /**
-     * 生成 GMA 本地鉴权 Step 1 挑战帧 (26 字节，命令 0x14)
-     * 官方抓包真机实测 (Packet 307):
-     * 18 00 01 00 15 00 00 00 00 14 [16B RandomA]
+     * 生成 GMA 本地鉴权 Step 1 挑战帧 (24 字节，命令 0x14)
+     * 注意：Android BluetoothSocket (LE-CoC) 会自动前置 2 字节 SDU 长度 (0x0018 = 24B)
+     * Java 应用层写入载荷 (24B):
+     * 01 00 15 00 00 00 00 14 [16B RandomA]
      */
     fun authStep1LocalChallenge(randomA: ByteArray = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }): ByteArray {
-        return ByteArray(26).apply {
-            this[0] = 0x18; this[1] = 0x00; this[2] = 0x01; this[3] = 0x00
-            this[4] = 0x15; this[5] = 0x00; this[6] = 0x00; this[7] = 0x00; this[8] = 0x00
-            this[9] = 0x14
-            System.arraycopy(randomA, 0, this, 10, 16)
+        return ByteArray(24).apply {
+            this[0] = 0x01; this[1] = 0x00; this[2] = 0x15; this[3] = 0x00
+            this[4] = 0x00; this[5] = 0x00; this[6] = 0x00; this[7] = 0x14
+            System.arraycopy(randomA, 0, this, 8, 16)
         }
     }
 
     /**
-     * 生成 GMA 快速鉴权挑战帧 (26 字节，命令 0x10)
-     * 官方抓包真机实测 (Packet 327):
-     * 18 00 01 00 15 00 00 [seq: 2B] 10 [16B RandomA2]
+     * 生成 GMA 快速鉴权挑战帧 (24 字节，命令 0x10)
+     * 注意：Android BluetoothSocket (LE-CoC) 会自动前置 2 字节 SDU 长度 (0x0018 = 24B)
+     * Java 应用层写入载荷 (24B):
+     * 01 00 15 00 00 [seq: 2B] 10 [16B RandomA2]
      */
     fun fastAuthChallenge(seq: Int = 1, randomA: ByteArray = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }): ByteArray {
-        return ByteArray(26).apply {
-            this[0] = 0x18; this[1] = 0x00; this[2] = 0x01; this[3] = 0x00
-            this[4] = 0x15; this[5] = 0x00; this[6] = 0x00
-            this[7] = (seq and 0xFF).toByte()
-            this[8] = ((seq shr 8) and 0xFF).toByte()
-            this[9] = 0x10
-            System.arraycopy(randomA, 0, this, 10, 16)
+        return ByteArray(24).apply {
+            this[0] = 0x01; this[1] = 0x00; this[2] = 0x15; this[3] = 0x00; this[4] = 0x00
+            this[5] = (seq and 0xFF).toByte()
+            this[6] = ((seq shr 8) and 0xFF).toByte()
+            this[7] = 0x10
+            System.arraycopy(randomA, 0, this, 8, 16)
         }
     }
 
     /**
-     * 生成 GMA 快速鉴权确认帧 (11 字节，命令 0x12)
-     * 官方抓包真机实测 (Packet 333):
-     * 09 00 01 00 06 00 00 [seq: 2B] 12 00
+     * 生成 GMA 快速鉴权确认帧 (9 字节，命令 0x12)
+     * 注意：Android BluetoothSocket (LE-CoC) 会自动前置 2 字节 SDU 长度 (0x0009 = 9B)
+     * Java 应用层写入载荷 (9B):
+     * 01 00 06 00 00 [seq: 2B] 12 00
      */
     fun fastAuthConfirm(seq: Int = 2): ByteArray {
         return byteArrayOf(
-            0x09, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+            0x01, 0x00, 0x06, 0x00, 0x00,
             (seq and 0xFF).toByte(), ((seq shr 8) and 0xFF).toByte(),
             0x12, 0x00
         )
     }
 
     /**
-     * 会话空节点初始化帧（12 字节，包号 3，载荷 "{}"）
-     * 官方抓包真机实测 (Packet 336):
-     * 0a 00 01 00 07 00 00 03 00 03 7b 7d
+     * 会话空节点初始化帧（10 字节，包号 3，载荷 "{}"）
+     * 自动前置 SDU 长度 0x000A
+     * Java 应用层写入载荷 (10B):
+     * 01 00 07 00 00 [seq: 2B] 03 7b 7d
      */
     fun emptyNodeInitFrame(seq: Int = 3): ByteArray {
         return byteArrayOf(
-            0x0a, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00,
+            0x01, 0x00, 0x07, 0x00, 0x00,
             (seq and 0xFF).toByte(), ((seq shr 8) and 0xFF).toByte(),
             0x03, 0x7b, 0x7d
         )
     }
 
     /**
-     * 会话 CBOR 系统信息帧（146 字节，官方抓包真机实测 Packet 337）
+     * 会话 CBOR 系统信息帧（144 字节，自动前置 SDU 长度 0x0090）
      */
     fun cborSystemInfoFrame(peerMac: String = "de:1b:47:f9:a2:64", seq: Int = 4): ByteArray {
         val baos = ByteArrayOutputStream()
         baos.write(byteArrayOf(
-            0x90.toByte(), 0x00, 0x01, 0x00, 0x8d.toByte(), 0x08, 0x00,
+            0x01, 0x00, 0x8d.toByte(), 0x08, 0x00,
             (seq and 0xFF).toByte(), ((seq shr 8) and 0xFF).toByte(),
             0x01
         ))
@@ -173,16 +180,18 @@ object QwenFramer {
     }
 
     /**
-     * 封装 GCSP 数据帧（官方 BLE L2CAP 抓包证实：JSON 数据帧无末尾 CRC）
+     * 封装 GCSP 数据帧
+     * 注意：Android BluetoothSocket (LE-CoC) 在底层写出时自动添加 2 字节 SDU 长度
+     * 因此应用层帧头由 8 字节构成：
+     * cid(2) + len(2) + flag(1) + seq(2) + msgType(1)
      */
     fun wrap(payload: ByteArray, msgType: Int = 1, cid: Int = 1, appendCrc: Boolean = false): ByteArray {
-        val headerLen = 10
+        val headerLen = 8
         val crcLen = if (appendCrc) 2 else 0
         val total = headerLen + payload.size + crcLen
         val buf = ByteBuffer.allocate(total).order(ByteOrder.LITTLE_ENDIAN)
 
-        // 头部字段
-        buf.putShort((total - 2).toShort())
+        // 头部字段（无外层 SDU 长度，由 Android 协议栈自动生成）
         buf.putShort(cid.toShort())
         buf.putShort((payload.size + 5).toShort())
         buf.put(0.toByte())

@@ -27,32 +27,46 @@ object GmaProtocolHandler {
         val hex = bytes.take(32).joinToString("") { "%02X".format(it) }
         LogCollector.log("GMA", "收到原始包 (${bytes.size}B): $hex")
 
+        // 动态判断是否带有 2 字节 LE-CoC SDU 长度：
+        // 1) SDU 长度已剥离（典型 Android InputStream.read）：bytes[0..1] == 0x0001 (CID)，cmd 在 bytes[7]，payload 起始于 bytes[8]
+        // 2) SDU 长度未剥离：bytes[2..3] == 0x0001 (CID)，cmd 在 bytes[9]，payload 起始于 bytes[10]
+        val cmd = when {
+            bytes.size >= 8 && (bytes[0].toInt() and 0xFF) == 0x01 && (bytes[1].toInt() and 0xFF) == 0x00 -> bytes[7].toInt() and 0xFF
+            bytes.size >= 10 && (bytes[2].toInt() and 0xFF) == 0x01 && (bytes[3].toInt() and 0xFF) == 0x00 -> bytes[9].toInt() and 0xFF
+            else -> -1
+        }
+        val payloadOffset = when {
+            bytes.size >= 8 && (bytes[0].toInt() and 0xFF) == 0x01 && (bytes[1].toInt() and 0xFF) == 0x00 -> 8
+            bytes.size >= 10 && (bytes[2].toInt() and 0xFF) == 0x01 && (bytes[3].toInt() and 0xFF) == 0x00 -> 10
+            else -> 0
+        }
+
         // 0. 收到眼镜 0x15 (HMAC 32B + RandomB 16B) -> 依据官方真机抓包 Packet 327，立即回复 0x10 GMA 快速鉴权帧 (seq=1)
-        if (bytes.size >= 58 && (bytes[9].toInt() and 0xFF) == 0x15) {
-            LogCollector.h("★ 收到眼镜 0x15 设备 HMAC 响应 (58B)")
-            val deviceHmac = bytes.copyOfRange(10, 42)
-            val randomB = bytes.copyOfRange(42, 58)
+        if (cmd == 0x15 && bytes.size >= payloadOffset + 48) {
+            LogCollector.h("★ 收到眼镜 0x15 设备 HMAC 响应 (${bytes.size}B)")
+            val deviceHmac = bytes.copyOfRange(payloadOffset, payloadOffset + 32)
+            val randomB = bytes.copyOfRange(payloadOffset + 32, payloadOffset + 48)
             LogCollector.h("  设备 HMAC: " + deviceHmac.take(8).joinToString("") { "%02X".format(it) } + "...")
             LogCollector.h("  设备 RandomB: " + randomB.joinToString("") { "%02X".format(it) })
 
             val challenge10 = QwenFramer.fastAuthChallenge(seq = 1)
-            LogCollector.h("← 触发 Phase 2: 下发 0x10 快速鉴权挑战包 (26B, seq=1)")
+            LogCollector.h("← 触发 Phase 2: 下发 0x10 快速鉴权挑战包 (24B, seq=1)")
             return challenge10
         }
 
         // 0.1 GMA 快速鉴权协议响应 (0x11 设备随机数响应 -> 自动回复 0x12 确认帧 seq=2)
-        if (bytes.size >= 26 && (bytes[9].toInt() and 0xFF) == 0x11) {
+        if (cmd == 0x11 && bytes.size >= payloadOffset + 16) {
             LogCollector.h("★ 收到眼镜 0x11 设备 RandomB2 响应 (26B)")
-            val randomB2 = bytes.copyOfRange(10, 26)
+            val randomB2 = bytes.copyOfRange(payloadOffset, payloadOffset + 16)
             LogCollector.h("  设备 RandomB2: " + randomB2.joinToString("") { "%02X".format(it) })
             val confirmFrame = QwenFramer.fastAuthConfirm(seq = 2)
-            LogCollector.h("← 下发 0x12 快速鉴权确认包 (11B, seq=2)")
+            LogCollector.h("← 下发 0x12 快速鉴权确认包 (9B, seq=2)")
             return confirmFrame
         }
 
         // 0.2 GMA 鉴权成功通知 (0x13 0x00)
-        if (bytes.size >= 11 && (bytes[9].toInt() and 0xFF) == 0x13) {
-            val status = bytes[10].toInt() and 0xFF
+        if (cmd == 0x13 && bytes.size >= payloadOffset + 1) {
+            val status = bytes[payloadOffset].toInt() and 0xFF
             if (status == 0) {
                 LogCollector.c("★★★★★ 眼镜上报 0x13 AUTH_SUCCESS (鉴权确凿通过！) ★★★★★")
                 onAuthSuccess?.invoke()
