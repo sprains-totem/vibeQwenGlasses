@@ -308,16 +308,6 @@ class GlassesConnectionService : Service() {
             }
         }
 
-        // 官方真机抓包 Packet 19383 实测：眼镜发起录音/推流会话建立请求时，手机必须立即回复 sessionId
-        // 否则眼镜会认为手机网络断开，触发语音播报“手机网络可能存在问题”
-        if (text.contains(".ogg") || text.contains("sceneContexts")) {
-            scope.launch {
-                val sid = (System.currentTimeMillis() / 1000).toInt()
-                com.vibeqwen.glasses.util.LogCollector.r("←应答眼镜音频录音会话请求: sessionId=$sid")
-                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson("""{"sessionId":$sid}"""))
-            }
-        }
-
         when (val ev = QwenEvents.parse(text).kind) {
             EventKind.RECORD_START -> Log.i(TAG, "眼镜事件: record_start")
             EventKind.RECORD_END -> Log.i(TAG, "眼镜事件: record_end")

@@ -164,18 +164,34 @@ class GcspFrameReassembler(
                 val jsonStart = frame.indexOf('{'.code.toByte())
                 val jsonEnd = frame.lastIndexOf('}'.code.toByte())
                 if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                    // 官方抓包 Packet 19388/19393 实测：
-                    // 眼镜上报带序号与命令字的消息（jsonStart >= 8, flag == 0x24）时，手机必须回发 8 字节 ACK，
-                    // 否则眼镜会判定与手机网络失联并播报“手机网络可能存在问题”
+                    // 官方抓包 Packet 19388/19393 严格确认格式（8 字节）：
+                    // 01 00 05 10 00 [msgId:1B] [nameSpace:1B] [cmdId:1B]
                     if (jsonStart >= 8 && frame[3] == 0x24.toByte()) {
                         val ack = byteArrayOf(
                             0x01, 0x00, 0x05, 0x10, 0x00,
-                            frame[4], frame[5], frame[6], frame[7]
+                            frame[5], frame[6], frame[7]
                         )
                         onGcspControl(ack)
                     }
                     val jsonBytes = frame.copyOfRange(jsonStart, jsonEnd + 1)
                     val jsonStr = String(jsonBytes, Charsets.UTF_8).trim()
+
+                    // 官方抓包 Packet 19383/19384 严格确认：
+                    // 眼镜上报 .ogg / sceneContexts 录音通道声明时，手机必须立即回送 flag=0x14 的 sessionId 响应帧，
+                    // 否则眼镜会认为网络失联、停止推流并播报“手机网络可能存在问题”
+                    if (jsonStart >= 8 && (jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts"))) {
+                        val sid = (System.currentTimeMillis() / 1000).toInt()
+                        val resp = QwenFramer.wrapResponse(
+                            """{"sessionId":$sid}""",
+                            msgId = frame[5].toInt() and 0xFF,
+                            nameSpace = frame[6].toInt() and 0xFF,
+                            cmdId = frame[7].toInt() and 0xFF,
+                            flag = 0x14
+                        )
+                        LogCollector.r("←响应眼镜录音推流会话请求 (.ogg/sceneContexts, msgId=0x%02X, sid=%d)".format(frame[5], sid))
+                        onGcspControl(resp)
+                    }
+
                     onJson(jsonStr)
                 } else {
                     // 二进制 GMA 命令 (如 0x15, 0x11, 0x13, 0x2009 等)
