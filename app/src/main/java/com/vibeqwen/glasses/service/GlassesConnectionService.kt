@@ -266,6 +266,18 @@ class GlassesConnectionService : Service() {
                 com.vibeqwen.glasses.util.LogCollector.c("握手完成 → READY")
                 publish { st -> st.copy(connection = ConnectionState.READY, message = "已就绪，可开始录音") }
                 updateNotification()
+
+                // 官方真机抓包确认：控制通道握手就绪后，立即建立经典蓝牙 RFCOMM 16 私有音频通道
+                scope.launch(Dispatchers.IO) {
+                    delay(300)
+                    com.vibeqwen.glasses.util.LogCollector.c("正在建立经典蓝牙私有音频通道 (RFCOMM Channel 16)...")
+                    val ok = transport?.openAudioChannel(transportListener) ?: false
+                    if (ok) {
+                        com.vibeqwen.glasses.util.LogCollector.c("★ 经典蓝牙私有音频通道 (RFCOMM 16) 建立成功！")
+                    } else {
+                        com.vibeqwen.glasses.util.LogCollector.e("RFCOMM 16 音频通道建立失败或暂未响应")
+                    }
+                }
             }
             h.onError = { err ->
                 com.vibeqwen.glasses.util.LogCollector.e("握手失败: $err")
@@ -293,6 +305,16 @@ class GlassesConnectionService : Service() {
                 val resp = com.vibeqwen.glasses.protocol.QwenCommands.updateDeviceStatusResp()
                 com.vibeqwen.glasses.util.LogCollector.h("←回复 UpdateDeviceStatusResp")
                 transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(resp))
+            }
+        }
+
+        // 官方真机抓包 Packet 19383 实测：眼镜发起录音/推流会话建立请求时，手机必须立即回复 sessionId
+        // 否则眼镜会认为手机网络断开，触发语音播报“手机网络可能存在问题”
+        if (text.contains(".ogg") || text.contains("sceneContexts")) {
+            scope.launch {
+                val sid = (System.currentTimeMillis() / 1000).toInt()
+                com.vibeqwen.glasses.util.LogCollector.r("←应答眼镜音频录音会话请求: sessionId=$sid")
+                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson("""{"sessionId":$sid}"""))
             }
         }
 

@@ -146,45 +146,7 @@ object QwenCommands {
             put("arg2", 0)
         }.toString()
 
-        // 5. 状态同步切入 Running
-        val j5 = buildJsonObject {
-            put("code", "AudioRecording")
-            put("traceId", traceId)
-            put("status", "Running")
-            put("reason", "CLOUD")
-            put("reasonStop", null as String?)
-            put("hint", "")
-            put("context", buildJsonObject {
-                put("taskLinkId", taskLinkId)
-                put("scene", "AudioRecording")
-                put("sessionId", sessionIdInt)
-            }.toString())
-        }.toString()
-
-        // 6. 音频通道格式声明 (.ogg / sceneContexts)
-        val j6 = buildJsonObject {
-            put("format", ".ogg")
-            put("sceneContexts", buildJsonObject {
-                put("taskLinkId", taskLinkId)
-                put("scene", "AudioRecording")
-            })
-            put("eventContext", buildJsonObject {
-                put("taskLayer", buildJsonObject {
-                    put("current", buildJsonObject {
-                        put("code", "AudioRecording")
-                        put("context", buildJsonObject {
-                            put("taskLinkId", taskLinkId)
-                            put("scene", "AudioRecording")
-                            put("sessionId", sessionIdInt)
-                        })
-                        put("reason", "CLOUD")
-                    })
-                    put("background", buildJsonArray {})
-                })
-            })
-        }.toString()
-
-        return listOf(j1, j2, j3, j4, j5, j6)
+        return listOf(j1, j2, j3, j4)
     }
 
     /** 停止录音：PART + code + type:4 停止确认 */

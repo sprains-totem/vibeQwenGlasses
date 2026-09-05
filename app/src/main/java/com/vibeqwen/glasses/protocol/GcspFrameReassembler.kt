@@ -164,6 +164,16 @@ class GcspFrameReassembler(
                 val jsonStart = frame.indexOf('{'.code.toByte())
                 val jsonEnd = frame.lastIndexOf('}'.code.toByte())
                 if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    // 官方抓包 Packet 19388/19393 实测：
+                    // 眼镜上报带序号与命令字的消息（jsonStart >= 8, flag == 0x24）时，手机必须回发 8 字节 ACK，
+                    // 否则眼镜会判定与手机网络失联并播报“手机网络可能存在问题”
+                    if (jsonStart >= 8 && frame[3] == 0x24.toByte()) {
+                        val ack = byteArrayOf(
+                            0x01, 0x00, 0x05, 0x10, 0x00,
+                            frame[4], frame[5], frame[6], frame[7]
+                        )
+                        onGcspControl(ack)
+                    }
                     val jsonBytes = frame.copyOfRange(jsonStart, jsonEnd + 1)
                     val jsonStr = String(jsonBytes, Charsets.UTF_8).trim()
                     onJson(jsonStr)
