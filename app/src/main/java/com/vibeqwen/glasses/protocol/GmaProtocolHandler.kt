@@ -107,11 +107,7 @@ object GmaProtocolHandler {
 
                 // 回复官方抓包确认的标准 GMA 应答 (12 字节应用层有效载荷，系统底层自动前置 0x0C 0x00 SDU 长度)
                 // 格式：01 00 09 00 00 [MsgId: 2B] 0F 0D 00 00 00
-                val ack = byteArrayOf(
-                    0x01, 0x00, 0x09, 0x00, 0x00,
-                    msgIdLow.toByte(), msgIdHigh.toByte(),
-                    0x0F, 0x0D, 0x00, 0x00, 0x00
-                )
+                val ack = QwenFramer.makeGmaAck(msgIdLow, msgIdHigh)
                 LogCollector.h("生成 GMA ACK: " + ack.joinToString("") { "%02X".format(it) })
                 return ack
             }

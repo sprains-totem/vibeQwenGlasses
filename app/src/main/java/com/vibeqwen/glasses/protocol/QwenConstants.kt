@@ -95,10 +95,13 @@ object QwenConstants {
         UUID_BES_CTRL_03F0,
     )
 
+    /** 阿里 AIS / GMA SDK 官方标准 RFCOMM 音频通道 UUID (真机 DEX 逆向严格提取) */
+    val UUID_GMA_RFCOMM = UUID.fromString("EB3E0AF3-57F4-4789-AB55-86508580296A")
+
     /** 控制通道 UUID 尝试顺序（官方绑定 UUID 优先） */
     val DEFAULT_CONTROL_UUIDS = listOf(UUID_OFFICIAL_BIND, UUID_BES_CTRL_03F0, UUID_BES_DATA_03FD, UUID_SPP_1101) + VENDOR_UUID_CANDIDATES
-    /** 音频通道 UUID 尝试顺序（HFP 通道在抓包中承载 AT 协商 + 音频帧） */
-    val DEFAULT_AUDIO_UUIDS = listOf(UUID_OFFICIAL_BIND, UUID_BES_DATA_03FD, UUID_HFAG_111E, UUID_HSP_1108, UUID_SPP_1101)
+    /** 音频通道 UUID 尝试顺序（官方 RFCOMM 优先） */
+    val DEFAULT_AUDIO_UUIDS = listOf(UUID_GMA_RFCOMM, UUID_OFFICIAL_BIND, UUID_BES_DATA_03FD, UUID_HFAG_111E, UUID_HSP_1108, UUID_SPP_1101)
 
     // ── 设备身份常量（真机抓包与 shared_prefs 提取） ──
     const val DEVICE_ODM = "AILABS_SG02_QW"

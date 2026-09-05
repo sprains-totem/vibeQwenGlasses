@@ -249,20 +249,21 @@ object QwenFramer {
     )
 
     /**
-     * 生成硬件录音推流使能帧 (官方抓包 Packet 19367 证实：12 字节)
-     * 01 00 09 00 00 [seq:1B] 03 2d 1a 00 00 00
+     * 生成硬件录音推流使能帧 (官方抓包 Packet 19367 证实：12 字节应用层有效载荷)
+     * 空口加上系统自动插入的 2 字节 SDU 长度后为 14 字节：
+     * 0C 00 01 00 09 00 00 [seq: 2B] 2D 1A 00 00 00
      */
-    fun hardwareRecordTrigger(): ByteArray {
+    fun hardwareRecordTrigger(seqVal: Int = 0x0340): ByteArray {
         return ByteArray(12).apply {
             this[0] = 0x01
             this[1] = 0x00
             this[2] = 0x09
             this[3] = 0x00
             this[4] = 0x00
-            this[5] = (seq and 0xFF).toByte()
-            this[6] = 0x03 // NameSpace = 3 (Hardware)
-            this[7] = 0x2d // CommandId = 0x2d
-            this[8] = 0x1a // 26
+            this[5] = (seqVal and 0xFF).toByte()
+            this[6] = ((seqVal shr 8) and 0xFF).toByte()
+            this[7] = 0x2d.toByte() // CommandId = 0x2d
+            this[8] = 0x1a.toByte() // 26
             this[9] = 0x00
             this[10] = 0x00
             this[11] = 0x00
@@ -271,20 +272,21 @@ object QwenFramer {
     }
 
     /**
-     * 生成 GMA ACK 响应帧 (官方抓包 Packet 19378 证实：12 字节)
-     * 01 00 09 00 00 [msgId:1B] 03 0f 0d 00 00 00
+     * 生成 GMA ACK 响应帧 (官方抓包 Packet 19378 证实：12 字节应用层有效载荷)
+     * 空口加上系统自动插入的 2 字节 SDU 长度后为 14 字节：
+     * 0C 00 01 00 09 00 00 [msgId: 2B] 0F 0D 00 00 00
      */
-    fun makeGmaAck(msgId: Int): ByteArray {
+    fun makeGmaAck(msgIdLow: Int, msgIdHigh: Int): ByteArray {
         return ByteArray(12).apply {
             this[0] = 0x01
             this[1] = 0x00
             this[2] = 0x09
             this[3] = 0x00
             this[4] = 0x00
-            this[5] = (msgId and 0xFF).toByte()
-            this[6] = 0x03
-            this[7] = 0x0f
-            this[8] = 0x0d
+            this[5] = msgIdLow.toByte()
+            this[6] = msgIdHigh.toByte()
+            this[7] = 0x0f.toByte() // CommandId = 0x0f
+            this[8] = 0x0d.toByte() // Payload = 0x0d
             this[9] = 0x00
             this[10] = 0x00
             this[11] = 0x00

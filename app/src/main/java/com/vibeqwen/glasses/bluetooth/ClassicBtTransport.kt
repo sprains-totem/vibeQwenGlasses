@@ -197,12 +197,12 @@ class ClassicBtTransport(
         return connectWithCandidates(controlCandidates, "control")
     }
 
-    /** 建立音频第二通道（官方抓包证实走经典蓝牙 RFCOMM Channel 16） */
+    /** 建立音频第二通道（官方抓包证实走经典蓝牙 RFCOMM） */
     fun openAudioChannel(listener: Listener): Boolean {
         this.listener = listener
-        // 1. 优先直连官方抓包验证的经典蓝牙 RFCOMM Channel 16
-        val sock = tryConnectRfcommChannel(QwenConstants.RFCOMM_AUDIO_CHANNEL)
-            ?: connectWithCandidates(audioCandidates, "audio")
+        // 1. 优先使用官方标准 RFCOMM UUID 建立连接（与官方 App 严格一致）
+        val sock = connectWithCandidates(listOf(QwenConstants.UUID_GMA_RFCOMM) + audioCandidates, "audio")
+            ?: tryConnectRfcommChannel(QwenConstants.RFCOMM_AUDIO_CHANNEL)
         if (sock == null) return false
         audioSocket = sock
         startReadLoop(sock, isAudio = true)
