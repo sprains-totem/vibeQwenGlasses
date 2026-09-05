@@ -10,14 +10,32 @@ android {
     namespace = "com.vibeqwen.glasses"
     compileSdk = 34
 
-    val ciRunNumber = 200 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
+    val gitCount = try {
+        val process = ProcessBuilder("git", "rev-list", "--count", "HEAD")
+            .directory(project.rootDir)
+            .start()
+        process.inputStream.bufferedReader().readText().trim().toIntOrNull() ?: 72
+    } catch (e: Exception) {
+        72
+    }
+
+    val gitHash = try {
+        val process = ProcessBuilder("git", "log", "-1", "--format=%h")
+            .directory(project.rootDir)
+            .start()
+        process.inputStream.bufferedReader().readText().trim().ifEmpty { "dev" }
+    } catch (e: Exception) {
+        "dev"
+    }
+
+    val ciRunNumber = 200 + gitCount
 
     defaultConfig {
         applicationId = "com.vibeqwen.glasses"
         minSdk = 26
         targetSdk = 34
         versionCode = ciRunNumber
-        versionName = "1.0.0-$ciRunNumber"
+        versionName = "1.0.0-$ciRunNumber-$gitHash"
     }
 
     signingConfigs {

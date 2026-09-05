@@ -64,23 +64,23 @@ class GcspFrameReassembler(
                 }
             }
 
-            // 2. 检查带外层长度前缀的旧式 GCSP 帧结构：[0..1] LE 长度-2, [2..3] LE CID
-            val declaredLen = (buffer[0].toInt() and 0xFF) or ((buffer[1].toInt() and 0xFF) shl 8)
-            val cid = (buffer[2].toInt() and 0xFF) or ((buffer[3].toInt() and 0xFF) shl 8)
-            val totalFrameLen = declaredLen + 2
-
-            // 合理帧长度校验 (4B 到 64KB)
-            if (totalFrameLen in 4..65536) {
-                if (buffer.size < totalFrameLen) {
-                    // 数据尚未收全，等待后续分包到达
-                    break
+            // 2. 检查带外层长度前缀的 GCSP 帧结构：[0..1] LE 长度-2, [2..3] LE CID
+            // 严格限定仅匹配官方规范的合法 CID，杜绝图片/文件二进制数据误判为超大帧
+            if (buffer.size >= 4) {
+                val cid = (buffer[2].toInt() and 0xFF) or ((buffer[3].toInt() and 0xFF) shl 8)
+                if (cid == 0x0001 || cid == 0x0000 || cid == 0x0041 || cid == 0x004A) {
+                    val declaredLen = (buffer[0].toInt() and 0xFF) or ((buffer[1].toInt() and 0xFF) shl 8)
+                    val totalFrameLen = declaredLen + 2
+                    if (totalFrameLen in 4..4096) {
+                        if (buffer.size < totalFrameLen) {
+                            break // 数据尚未收全，等待后续分包到达
+                        }
+                        val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
+                        buffer.subList(0, totalFrameLen).clear()
+                        dispatchFrame(cid, frameBytes)
+                        continue
+                    }
                 }
-
-                // 提取完整的一帧
-                val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
-                buffer.subList(0, totalFrameLen).clear()
-                dispatchFrame(cid, frameBytes)
-                continue
             }
 
             // 3. 检查纯 JSON 文本开头的容错 ({ 开头)
