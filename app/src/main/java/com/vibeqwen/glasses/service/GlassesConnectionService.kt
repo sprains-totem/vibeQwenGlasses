@@ -439,6 +439,7 @@ class GlassesConnectionService : Service() {
     /** 封口并保存当前录音 */
     private fun finalizeRecording(reason: String) {
         if (!recording) return
+        com.vibeqwen.glasses.util.LogCollector.r("★ 录音封口并停止: 原因=$reason")
         recording = false
         tickerJob?.cancel()
         tickerJob = null
