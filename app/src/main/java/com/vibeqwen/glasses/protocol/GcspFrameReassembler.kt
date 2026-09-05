@@ -40,16 +40,29 @@ class GcspFrameReassembler(
                 continue
             }
 
-            // 1.5 检查裸 GMA SDU 命令帧（[0..1] 是 CID 0x0001, [2..3] 是 CmdId 0x2009）
+            // 1.5 检查标准 Android LE-CoC 数据帧（已剥离 2 字节 SDU 长度前缀）：
+            // [0..1] 是 CID (0x0001 GMA/GCSP 数据, 0x0000 GCSP 控制)
+            // [2] 是 PDU 长度 byte，整帧长度 = 3 + (buffer[2] & 0xFF)
             val first2 = (buffer[0].toInt() and 0xFF) or ((buffer[1].toInt() and 0xFF) shl 8)
-            if (first2 == 0x0001 && buffer.size >= 12 && buffer[2] == 0x09.toByte() && buffer[3] == 0x20.toByte()) {
-                val frameBytes = ByteArray(12) { buffer[it] }
-                buffer.subList(0, 12).clear()
-                onGmaCommand(1, frameBytes)
-                continue
+            if ((first2 == 0x0001 || first2 == 0x0000) && buffer.size >= 3) {
+                val pduLen = buffer[2].toInt() and 0xFF
+                val totalFrameLen = 3 + pduLen
+                if (totalFrameLen in 4..4096) {
+                    if (buffer.size < totalFrameLen) {
+                        break // 数据分包未收全，等待下一包到达
+                    }
+                    val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
+                    buffer.subList(0, totalFrameLen).clear()
+                    if (first2 == 0x0000) {
+                        onGcspControl(frameBytes)
+                    } else {
+                        dispatchFrame(first2, frameBytes)
+                    }
+                    continue
+                }
             }
 
-            // 2. 检查 GCSP 帧结构：[0..1] LE 长度-2, [2..3] LE CID
+            // 2. 检查带外层长度前缀的旧式 GCSP 帧结构：[0..1] LE 长度-2, [2..3] LE CID
             val declaredLen = (buffer[0].toInt() and 0xFF) or ((buffer[1].toInt() and 0xFF) shl 8)
             val cid = (buffer[2].toInt() and 0xFF) or ((buffer[3].toInt() and 0xFF) shl 8)
             val totalFrameLen = declaredLen + 2
@@ -148,19 +161,14 @@ class GcspFrameReassembler(
             }
             0x0001, 0x0041, 0x004A -> {
                 // 控制/数据通道：检查载荷是否为 JSON
-                // 帧头通常为 10 字节，若 [10] 是 '{' 则为 JSON
-                if (frame.size > 10 && frame[10].toInt().toChar() == '{') {
-                    // 剥离头部与末尾 CRC16 (如果有)
-                    val payloadEnd = if (frame.size >= 12 && hasCrc(frame)) frame.size - 2 else frame.size
-                    val jsonBytes = frame.copyOfRange(10, payloadEnd)
+                val jsonStart = frame.indexOf('{'.code.toByte())
+                val jsonEnd = frame.lastIndexOf('}'.code.toByte())
+                if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                    val jsonBytes = frame.copyOfRange(jsonStart, jsonEnd + 1)
                     val jsonStr = String(jsonBytes, Charsets.UTF_8).trim()
                     onJson(jsonStr)
-                } else if (frame.size > 4 && frame[4].toInt().toChar() == '{') {
-                    val payloadEnd = if (frame.size >= 6 && hasCrc(frame)) frame.size - 2 else frame.size
-                    val jsonBytes = frame.copyOfRange(4, payloadEnd)
-                    onJson(String(jsonBytes, Charsets.UTF_8).trim())
                 } else {
-                    // 二进制 GMA 命令
+                    // 二进制 GMA 命令 (如 0x15, 0x11, 0x13, 0x2009 等)
                     onGmaCommand(cid, frame)
                 }
             }
