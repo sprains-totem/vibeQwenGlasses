@@ -8,7 +8,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Description
@@ -52,6 +54,7 @@ class MainActivity : ComponentActivity() {
 private fun MainScreen() {
     val context = LocalContext.current
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    val playerState by com.vibeqwen.glasses.audio.GlobalAudioPlayer.state.collectAsStateWithLifecycle()
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { /* 连接/录音动作前会再次校验权限 */ }
@@ -68,31 +71,38 @@ private fun MainScreen() {
 
     Scaffold(
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    icon = { Icon(Icons.Filled.Bluetooth, contentDescription = null) },
-                    label = { Text("连接") },
-                )
-                NavigationBarItem(
-                    selected = tab == 1,
-                    onClick = { tab = 1 },
-                    icon = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
-                    label = { Text("录音") },
-                )
-                NavigationBarItem(
-                    selected = tab == 2,
-                    onClick = { tab = 2 },
-                    icon = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
-                    label = { Text("录音库") },
-                )
-                NavigationBarItem(
-                    selected = tab == 3,
-                    onClick = { tab = 3 },
-                    icon = { Icon(Icons.Filled.Description, contentDescription = null) },
-                    label = { Text("日志") },
-                )
+            androidx.compose.foundation.layout.Column {
+                if (playerState.current != null) {
+                    com.vibeqwen.glasses.ui.player.MiniPlayerBar(
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = tab == 0,
+                        onClick = { tab = 0 },
+                        icon = { Icon(Icons.Filled.Bluetooth, contentDescription = null) },
+                        label = { Text("连接") },
+                    )
+                    NavigationBarItem(
+                        selected = tab == 1,
+                        onClick = { tab = 1 },
+                        icon = { Icon(Icons.Filled.GraphicEq, contentDescription = null) },
+                        label = { Text("录音") },
+                    )
+                    NavigationBarItem(
+                        selected = tab == 2,
+                        onClick = { tab = 2 },
+                        icon = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
+                        label = { Text("录音库") },
+                    )
+                    NavigationBarItem(
+                        selected = tab == 3,
+                        onClick = { tab = 3 },
+                        icon = { Icon(Icons.Filled.Description, contentDescription = null) },
+                        label = { Text("日志") },
+                    )
+                }
             }
         }
     ) { padding ->
@@ -108,5 +118,12 @@ private fun MainScreen() {
                 3 -> LogScreen()
             }
         }
+    }
+
+    // 全局大图播放器弹层：在任何 Tab 只要 sheetVisible 即可即刻弹出
+    if (playerState.sheetVisible && playerState.current != null) {
+        com.vibeqwen.glasses.ui.player.PlayerSheet(onDismiss = {
+            com.vibeqwen.glasses.audio.GlobalAudioPlayer.closeSheet()
+        })
     }
 }
