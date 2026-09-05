@@ -118,6 +118,18 @@ private fun RecordingRow(
     onDelete: () -> Unit,
     onShare: () -> Unit,
 ) {
+    // 将文件名如 rec_20260905_181832.wav 转换为人性化标题
+    val friendlyTitle = remember(info.displayName) {
+        val regex = Regex("""rec_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})""")
+        val m = regex.find(info.displayName)
+        if (m != null) {
+            val (_, mth, day, hour, min) = m.destructured
+            "${mth}月${day}日 ${hour}:${min} 的现场录音"
+        } else {
+            info.displayName.removeSuffix(".wav")
+        }
+    }
+
     Card(
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         modifier = Modifier
@@ -127,29 +139,42 @@ private fun RecordingRow(
         Row(
             Modifier
                 .clickable(onClick = onPlay)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
+                .padding(horizontal = 14.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Filled.MusicNote,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-            )
-            Spacer(Modifier.width(12.dp))
+            Box(
+                modifier = Modifier
+                    .width(42.dp)
+                    .height(42.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "播放",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.width(28.dp).height(28.dp),
+                )
+            }
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text(info.displayName, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
-                Spacer(Modifier.height(2.dp))
+                Text(
+                    friendlyTitle,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.height(3.dp))
                 Text(
                     "${TimeFormat.clock(info.durationMs)} · ${TimeFormat.size(info.sizeBytes)} · ${TimeFormat.date(info.modifiedMs)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            IconButton(onClick = onPlay) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = "播放")
-            }
             IconButton(onClick = onShare) {
-                Icon(Icons.Filled.Share, contentDescription = "分享")
+                Icon(
+                    Icons.Filled.Share,
+                    contentDescription = "分享",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             IconButton(onClick = onDelete) {
                 Icon(

@@ -91,6 +91,7 @@ class GlassesConnectionService : Service() {
     private var tickerJob: Job? = null
     private var recording = false
     private var recordStartMs = 0L
+    private var userStoppedCooldownUntil = 0L
 
     fun transport(): ClassicBtTransport? = transport
 
@@ -305,15 +306,33 @@ class GlassesConnectionService : Service() {
             }
         }
 
+        if (text.contains("INPUT_EVENT") || text.contains("input") || text.contains("touch")) {
+            com.vibeqwen.glasses.util.LogCollector.c("★ 捕获眼镜侧输入事件: ${text.take(160)}")
+        }
+
         when (val ev = QwenEvents.parse(text).kind) {
-            EventKind.RECORD_START -> Log.i(TAG, "眼镜事件: record_start")
-            EventKind.RECORD_END -> Log.i(TAG, "眼镜事件: record_end")
+            EventKind.RECORD_START -> {
+                Log.i(TAG, "眼镜事件: record_start")
+                if (!recording && System.currentTimeMillis() > userStoppedCooldownUntil && isReady()) {
+                    com.vibeqwen.glasses.util.LogCollector.r("★ 收到眼镜侧 record_start，联动启动本地录音采集")
+                    startRecording(auto = true)
+                }
+            }
+            EventKind.RECORD_END -> {
+                Log.i(TAG, "眼镜事件: record_end")
+                if (recording) {
+                    finalizeRecording("眼镜侧结束录音(record_end)")
+                }
+            }
             EventKind.RECORD_STATUS -> {
                 val status = QwenEvents.parse(text)
                 Log.i(TAG, "眼镜事件: AudioRecording status=${status.recordStatus} stop=${status.reasonStop}")
                 // 眼镜侧结束录音（reasonStop=KEY/CLOUD）：本地自动封口保存
                 if (status.recordStatus == "Exited" && recording) {
                     finalizeRecording("眼镜侧结束录音")
+                } else if (status.recordStatus == "Running" && !recording && System.currentTimeMillis() > userStoppedCooldownUntil && isReady()) {
+                    com.vibeqwen.glasses.util.LogCollector.r("★ 收到眼镜侧 status=Running，联动启动本地录音采集")
+                    startRecording(auto = true)
                 }
             }
             EventKind.RECORD_TELEMETRY -> Unit
@@ -345,11 +364,11 @@ class GlassesConnectionService : Service() {
         // 2. 检查并提取音频帧
         val frames = frameParser.feed(bytes)
         if (frames.isEmpty()) return
+        if (!recording) {
+            // 当前非录音状态，丢弃停止残留的音频帧，严格禁止反向自启动录音！
+            return
+        }
         for (frame in frames) {
-            // 眼镜主动推流（已 READY 且未在录）：自动开始录制
-            if (!recording && AUTO_CAPTURE && isReady()) {
-                startRecording(auto = true)
-            }
             pipeline?.writeFrame(frame.pcm)
             publish { it.copy(frames = it.frames + 1) }
             if (frameParser.totalFrames % 50 == 1L) {
@@ -427,6 +446,7 @@ class GlassesConnectionService : Service() {
 
     private fun stopRecording() {
         if (!recording) return
+        userStoppedCooldownUntil = System.currentTimeMillis() + 4000L // 4秒内禁止任何自动录音重入
         finalizeRecording("用户停止")
         // 官方抓包 Packet 48698/48699 严格确认的停止录音指令序列
         val j1 = """{"type":"PART","codeList":["AudioRecording"]}"""

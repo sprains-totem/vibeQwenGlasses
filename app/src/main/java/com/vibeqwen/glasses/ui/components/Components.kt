@@ -24,24 +24,29 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * 实时波形（竖条图）：输入 0..1 幅度序列。
+ * 实时波形（竖条图）：输入 0..1 幅度序列，支持传入 progress 进度（0f..1f）高亮显示已播放部分。
  */
 @Composable
 fun WaveformBar(
     values: List<Float>,
     modifier: Modifier = Modifier,
-    barColor: Color = MaterialTheme.colorScheme.primary,
+    progress: Float = 0f,
+    activeColor: Color = MaterialTheme.colorScheme.primary,
+    inactiveColor: Color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
 ) {
     Canvas(modifier = modifier) {
         if (values.isEmpty()) return@Canvas
-        val step = size.width / values.size
+        val count = values.size
+        val step = size.width / count
+        val clampedProgress = progress.coerceIn(0f, 1f)
         for (i in values.indices) {
-            val v = values[i].coerceIn(0.03f, 1f)
-            val h = (v * size.height * 0.92f).coerceAtLeast(2f)
+            val v = values[i].coerceIn(0.04f, 1f)
+            val h = (v * size.height * 0.92f).coerceAtLeast(3f)
             val x = i * step + step * 0.18f
-            val w = step * 0.64f
+            val w = (step * 0.64f).coerceAtLeast(2f)
+            val isPlayed = (i.toFloat() / count) <= clampedProgress
             drawRoundRect(
-                color = barColor,
+                color = if (isPlayed) activeColor else inactiveColor,
                 topLeft = Offset(x, size.height / 2f - h / 2f),
                 size = Size(w, h),
                 cornerRadius = CornerRadius(w / 2f),

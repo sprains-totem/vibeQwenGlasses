@@ -55,6 +55,10 @@ class PlayerViewModel(private val info: RecordingInfo) : ViewModel() {
                 )
                 prepare()
                 isLooping = false
+                setOnCompletionListener {
+                    seekTo(0)
+                    _ui.update { it.copy(isPlaying = false, positionMs = 0L) }
+                }
             }
         } catch (e: Exception) {
             _ui.update { it.copy(error = "无法播放：${e.message}") }
@@ -70,6 +74,10 @@ class PlayerViewModel(private val info: RecordingInfo) : ViewModel() {
             p.pause()
             _ui.update { it.copy(isPlaying = false) }
         } else {
+            if (p.duration > 0 && p.currentPosition >= p.duration - 300) {
+                p.seekTo(0)
+                _ui.update { it.copy(positionMs = 0L) }
+            }
             p.start()
             _ui.update { it.copy(isPlaying = true) }
         }
@@ -94,6 +102,15 @@ class PlayerViewModel(private val info: RecordingInfo) : ViewModel() {
         _ui.update { it.copy(loop = next) }
     }
 
+    private val speedList = listOf(1.0f, 1.25f, 1.5f, 2.0f, 0.75f)
+
+    fun cycleSpeed() {
+        val cur = _ui.value.speed
+        val curIdx = speedList.indexOfFirst { abs(it - cur) < 0.05f }
+        val nextSpeed = if (curIdx >= 0) speedList[(curIdx + 1) % speedList.size] else 1.0f
+        setSpeed(nextSpeed)
+    }
+
     /** 变速 0.5x ~ 2.0x（PlaybackParams，API 23+） */
     fun setSpeed(speed: Float) {
         val p = player ?: return
@@ -113,11 +130,11 @@ class PlayerViewModel(private val info: RecordingInfo) : ViewModel() {
                 val dur = _ui.value.durationMs
                 if (p.isPlaying) {
                     _ui.update { it.copy(positionMs = p.currentPosition.toLong()) }
-                } else if (dur > 0 && !p.isLooping && p.currentPosition >= p.duration - 300) {
-                    // 播放到末尾自动停下
-                    _ui.update { it.copy(isPlaying = false) }
+                } else if (dur > 0 && !p.isLooping && p.currentPosition >= p.duration - 200) {
+                    // 播放到末尾自动停下并复位
+                    _ui.update { it.copy(isPlaying = false, positionMs = 0L) }
                 }
-                delay(300)
+                delay(200)
             }
         }
     }
@@ -128,40 +145,40 @@ class PlayerViewModel(private val info: RecordingInfo) : ViewModel() {
         player = null
     }
 
-    /** 从 WAV 读 PCM 计算峰值（M4A 返回空数组，仅显示进度条） */
-    private fun computePeaks(file: File, target: Int): FloatArray {
+    /** 从 WAV 读 PCM 计算峰值，全量等步长采样 */
+    private fun computePeaks(file: File, target: Int = 120): FloatArray {
         if (file.extension.lowercase() != "wav") return FloatArray(0)
-        if (file.length() < 44) return FloatArray(0)
-        val size = file.length().toInt()
-        val toRead = minOf(size - 44, 2 * 1024 * 1024)
-        val data = ByteArray(toRead)
+        val fileLen = file.length()
+        if (fileLen < 44) return FloatArray(0)
+        val pcmBytes = fileLen - 44
+        val totalSamples = (pcmBytes / 2).toInt()
+        if (totalSamples <= 0) return FloatArray(0)
+
+        val peaks = FloatArray(target)
         try {
             RandomAccessFile(file, "r").use { raf ->
-                raf.seek(44)
-                raf.readFully(data)
+                val stepSamples = (totalSamples / target).coerceAtLeast(1)
+                val sampleBlock = ByteArray(minOf(stepSamples * 2, 4096))
+                for (b in 0 until target) {
+                    val sampleIdx = (b.toLong() * totalSamples / target).coerceAtMost(totalSamples - 1L)
+                    val offset = 44L + sampleIdx * 2L
+                    raf.seek(offset)
+                    val readBytes = raf.read(sampleBlock)
+                    var maxAbs = 0
+                    var i = 0
+                    while (i + 1 < readBytes) {
+                        val lo = sampleBlock[i].toInt() and 0xFF
+                        val hi = sampleBlock[i + 1].toInt()
+                        val s = (lo or (hi shl 8)).toShort().toInt()
+                        val a = abs(s)
+                        if (a > maxAbs) maxAbs = a
+                        i += 2
+                    }
+                    peaks[b] = (maxAbs / 32768f).coerceIn(0f, 1f)
+                }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return FloatArray(0)
-        }
-        val perBucket = ((data.size / 2) / target).coerceAtLeast(1)
-        val peaks = FloatArray(target)
-        var bucket = 0
-        var count = 0
-        var maxAbs = 0
-        var i = 0
-        while (i + 1 < data.size && bucket < target) {
-            val lo = data[i].toInt() and 0xFF
-            val hi = data[i + 1].toInt()
-            val s = (lo or (hi shl 8)).toShort().toInt()
-            val a = abs(s)
-            if (a > maxAbs) maxAbs = a
-            count++
-            if (count >= perBucket) {
-                peaks[bucket++] = maxAbs / 32768f
-                maxAbs = 0
-                count = 0
-            }
-            i += 2
         }
         return peaks
     }
