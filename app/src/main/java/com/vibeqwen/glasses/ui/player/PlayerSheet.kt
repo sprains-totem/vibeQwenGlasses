@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.FastRewind
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -161,19 +163,30 @@ fun PlayerSheet(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                // 循环切换
-                IconButton(onClick = { GlobalAudioPlayer.toggleLoop() }) {
+                // 循环切换（带明显激活背景指示）
+                FilledIconButton(
+                    onClick = { GlobalAudioPlayer.toggleLoop() },
+                    modifier = Modifier.size(44.dp),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledIconButtonColors(
+                        containerColor = if (state.loop) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        contentColor = if (state.loop) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    ),
+                ) {
                     Icon(
                         Icons.Filled.Repeat,
-                        contentDescription = "循环",
-                        tint = if (state.loop) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        contentDescription = if (state.loop) "循环模式开启" else "循环模式关闭",
+                        modifier = Modifier.size(22.dp),
                     )
                 }
 
                 // 快退 10 秒
                 FilledIconButton(
                     onClick = { GlobalAudioPlayer.skip(-10_000) },
+                    modifier = Modifier.size(44.dp),
+                    shape = CircleShape,
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     ),
@@ -201,6 +214,8 @@ fun PlayerSheet(
                 // 快进 10 秒
                 FilledIconButton(
                     onClick = { GlobalAudioPlayer.skip(10_000) },
+                    modifier = Modifier.size(44.dp),
+                    shape = CircleShape,
                     colors = IconButtonDefaults.filledIconButtonColors(
                         containerColor = MaterialTheme.colorScheme.surfaceVariant
                     ),
@@ -208,16 +223,41 @@ fun PlayerSheet(
                     Icon(Icons.Filled.FastForward, contentDescription = "前进10秒")
                 }
 
-                // 倍速切换按钮（单键循环 1.0x -> 1.25x -> 1.5x -> 2.0x -> 0.75x）
-                OutlinedButton(
-                    onClick = { GlobalAudioPlayer.cycleSpeed() },
-                    shape = RoundedCornerShape(16.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                ) {
-                    Text(
-                        "${state.speed}x".replace(".0x", "x"),
-                        style = MaterialTheme.typography.labelMedium,
-                    )
+                // 倍速切换胶囊 + 下拉精选菜单
+                var showSpeedMenu by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(
+                        onClick = { showSpeedMenu = true },
+                        shape = RoundedCornerShape(16.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    ) {
+                        Text(
+                            "${state.speed}x".replace(".0x", "x"),
+                            style = MaterialTheme.typography.labelMedium,
+                        )
+                    }
+
+                    DropdownMenu(
+                        expanded = showSpeedMenu,
+                        onDismissRequest = { showSpeedMenu = false }
+                    ) {
+                        listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { sp ->
+                            val isSel = kotlin.math.abs(state.speed - sp) < 0.05f
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (sp == 1.0f) "1.0x (原速)" else "${sp}x",
+                                        color = if (isSel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        style = if (isSel) MaterialTheme.typography.labelLarge else MaterialTheme.typography.bodyMedium
+                                    )
+                                },
+                                onClick = {
+                                    GlobalAudioPlayer.setSpeed(sp)
+                                    showSpeedMenu = false
+                                }
+                            )
+                        }
+                    }
                 }
             }
 

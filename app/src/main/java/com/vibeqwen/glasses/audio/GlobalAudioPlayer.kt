@@ -104,13 +104,20 @@ object GlobalAudioPlayer {
                         .build()
                 )
                 prepare()
-                isLooping = _state.value.loop
+                isLooping = false
                 if (_state.value.speed != 1.0f) {
-                    playbackParams = playbackParams.setSpeed(_state.value.speed)
+                    val params = playbackParams.setSpeed(_state.value.speed)
+                    playbackParams = params
                 }
                 setOnCompletionListener {
-                    seekTo(0)
-                    _state.update { it.copy(isPlaying = false, positionMs = 0L) }
+                    if (_state.value.loop) {
+                        seekTo(0)
+                        start()
+                        _state.update { it.copy(isPlaying = true, positionMs = 0L) }
+                    } else {
+                        seekTo(0)
+                        _state.update { it.copy(isPlaying = false, positionMs = 0L) }
+                    }
                 }
             }
             player = mp
@@ -168,7 +175,6 @@ object GlobalAudioPlayer {
 
     fun toggleLoop() {
         val next = !_state.value.loop
-        player?.isLooping = next
         _state.update { it.copy(loop = next) }
     }
 
@@ -180,10 +186,16 @@ object GlobalAudioPlayer {
     }
 
     fun setSpeed(speed: Float) {
+        val wasPlaying = _state.value.isPlaying
+        _state.update { it.copy(speed = speed) }
         val p = player ?: return
         try {
-            p.playbackParams = p.playbackParams.setSpeed(speed)
-            _state.update { it.copy(speed = speed) }
+            val params = p.playbackParams.setSpeed(speed)
+            p.playbackParams = params
+            if (!wasPlaying) {
+                // 关键：Android 设置 playbackParams 会强制底层开始播放，若之前为暂停，必须立即 pause 保持暂停！
+                p.pause()
+            }
         } catch (e: Exception) {
             _state.update { it.copy(error = "变速失败: ${e.message}") }
         }
@@ -227,9 +239,16 @@ object GlobalAudioPlayer {
             while (isActive) {
                 val p = player ?: break
                 if (p.isPlaying) {
-                    _state.update { it.copy(positionMs = p.currentPosition.toLong()) }
+                    val curPos = p.currentPosition.toLong()
+                    val dur = p.duration.toLong()
+                    if (dur > 0 && curPos >= dur - 150 && _state.value.loop) {
+                        p.seekTo(0)
+                        _state.update { it.copy(positionMs = 0L) }
+                    } else {
+                        _state.update { it.copy(positionMs = curPos) }
+                    }
                 }
-                delay(200)
+                delay(150)
             }
         }
     }
