@@ -389,6 +389,17 @@ class GlassesConnectionService : Service() {
         val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":"$sessionIdStr","uri":"airecord://start"}"""
 
         scope.launch {
+            if (transport?.isAudioConnected != true) {
+                com.vibeqwen.glasses.util.LogCollector.c("录音启动前确保音频通道建立...")
+                val ok = transport?.openAudioChannel(transportListener) ?: false
+                if (ok) {
+                    com.vibeqwen.glasses.util.LogCollector.c("★ 经典蓝牙私有音频通道 (RFCOMM 16) 建立成功！")
+                } else {
+                    com.vibeqwen.glasses.util.LogCollector.e("RFCOMM 16 音频通道建立失败")
+                }
+                delay(200)
+            }
+
             com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording (ns=0x0F, cmd=0x01, flag=0x04)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j1.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0F, cmdId = 0x01

@@ -53,6 +53,8 @@ class ClassicBtTransport(
     @Volatile
     private var audioSocket: BluetoothSocket? = null
 
+    val isAudioConnected: Boolean get() = audioSocket?.isConnected == true
+
     @Volatile
     private var cancelled = false
 
