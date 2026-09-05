@@ -384,8 +384,8 @@ class GlassesConnectionService : Service() {
         val hex32 = com.vibeqwen.glasses.protocol.QwenCommands.randomHex32()
         val taskLinkId = "AudioRecording$ts$hex32"
 
-        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId"}}"""
-        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":"$sessionIdStr","taskLinkId":"$taskLinkId"}"""
+        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId","bizType":"live"},"sessionId":"$sessionIdStr"}"""
+        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":"$sessionIdStr","taskLinkId":"$taskLinkId","wakeupType":"longRecord"}"""
         val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":"$sessionIdStr","uri":"airecord://start"}"""
 
         scope.launch {
