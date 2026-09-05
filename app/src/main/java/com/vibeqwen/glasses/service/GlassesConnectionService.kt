@@ -391,14 +391,38 @@ class GlassesConnectionService : Service() {
             p.start(recordStartMs)
         }
 
-        // 同步下发官方 3 条开始录音指令（触发眼镜硬件启动麦克风推流）
-        val cmds = QwenCommands.startRecord()
+        // 下发官方录音指令全集序列（官方抓包 Packet 19364~19368 严格一致）
+        val ts = System.currentTimeMillis()
+        val sessionIdInt = (ts / 1000).toInt()
+        val hex32 = com.vibeqwen.glasses.protocol.QwenCommands.randomHex32()
+        val taskLinkId = "AudioRecording$ts$hex32"
+        val traceId = "213fe5af$ts${hex32.take(14).lowercase()}"
+        val dialogId = "44354137344330345f313538343930313134353939363435383135335f7ffffe5f900d068b"
+
+        val j1 = """{"code":"AudioRecording","extensions":{"taskLinkId":"$taskLinkId"},"sessionId":$sessionIdInt,"traceId":"$traceId"}"""
+        val j2 = """{"scene":"AudioRecording","sessionId":$sessionIdInt,"taskLinkId":"$taskLinkId","traceId":"$traceId","wakeupType":"longRecord"}"""
+        val j3 = """{"data":{"dialogId":"$dialogId"},"pageType":"SCHEME_AIRECORD_START","sessionId":$sessionIdInt,"traceId":"$traceId","uri":"airecord://start"}"""
+        val j4 = """{"type":4,"arg1":$sessionIdInt,"arg2":0}"""
+
         scope.launch {
-            for (c in cmds) {
-                com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令: $c")
-                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(c))
-                delay(150)
-            }
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(j1, nameSpace = 0x0F, cmdId = 0x01))
+            delay(50)
+
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 2: scene=AudioRecording")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(j2, nameSpace = 0x0D, cmdId = 0x03))
+            delay(50)
+
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 3: SCHEME_AIRECORD_START")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(j3, nameSpace = 0x0D, cmdId = 0x01))
+            delay(50)
+
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 4: 硬件录音推流使能 (0x2d 0x1a)")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.hardwareRecordTrigger())
+            delay(50)
+
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 5: 通道建立确认 type:4")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(j4, nameSpace = 0x0E, cmdId = 0x01))
         }
 
         publish {

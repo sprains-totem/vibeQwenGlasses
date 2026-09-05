@@ -185,19 +185,42 @@ object QwenFramer {
      * 因此应用层帧头由 8 字节构成：
      * cid(2) + len(2) + flag(1) + seq(2) + msgType(1)
      */
-    fun wrap(payload: ByteArray, msgType: Int = 1, cid: Int = 1, appendCrc: Boolean = false): ByteArray {
+    /**
+     * 封装 GCSP / AIS 数据帧
+     * 官方真机抓包严格确认格式（8 字节规范头）：
+     * [0]: 0x01 (Channel 1)
+     * [1]: (PDU长度 >> 8) & 0x0F
+     * [2]: PDU长度 & 0xFF
+     * [3]: flag (默认 0x24: PayloadType=JSON, Type=2, requires ACK)
+     * [4]: 0x00 (Segment 0)
+     * [5]: seq (1 字节递增序号)
+     * [6]: nameSpace (默认 0x0F)
+     * [7]: cmdId (默认 0x01)
+     */
+    fun wrap(
+        payload: ByteArray,
+        flag: Int = 0x24,
+        nameSpace: Int = 0x0F,
+        cmdId: Int = 0x01,
+        appendCrc: Boolean = false,
+        msgType: Int = 1,
+        cid: Int = 1
+    ): ByteArray {
+        val pduLen = payload.size + 5
         val headerLen = 8
         val crcLen = if (appendCrc) 2 else 0
         val total = headerLen + payload.size + crcLen
-        val buf = ByteBuffer.allocate(total).order(ByteOrder.LITTLE_ENDIAN)
+        val buf = ByteBuffer.allocate(total)
 
-        // 头部字段（无外层 SDU 长度，由 Android 协议栈自动生成）
-        buf.putShort(cid.toShort())
-        buf.putShort((payload.size + 5).toShort())
-        buf.put(0.toByte())
-        buf.putShort(seq.toShort())
-        buf.put(msgType.toByte())
-        seq++
+        buf.put(0x01.toByte())
+        buf.put(((pduLen shr 8) and 0x0F).toByte())
+        buf.put((pduLen and 0xFF).toByte())
+        buf.put(flag.toByte())
+        buf.put(0x00.toByte())
+        buf.put((seq and 0xFF).toByte())
+        buf.put((nameSpace and 0xFF).toByte())
+        buf.put((cmdId and 0xFF).toByte())
+        seq = (seq + 1) and 0xFF
 
         // 载荷
         buf.put(payload)
@@ -212,9 +235,61 @@ object QwenFramer {
         return buf.array()
     }
 
-    /** 封装 JSON 字符串为 GCSP 帧 (appendCrc = false) */
-    fun wrapJson(json: String, msgType: Int = 1): ByteArray =
-        wrap(json.toByteArray(Charsets.UTF_8), msgType = msgType, appendCrc = false)
+    /** 封装 JSON 字符串为标准 AIS 帧 (官方抓包证实 flag=0x24) */
+    fun wrapJson(
+        json: String,
+        nameSpace: Int = 0x0F,
+        cmdId: Int = 0x01
+    ): ByteArray = wrap(
+        json.toByteArray(Charsets.UTF_8),
+        flag = 0x24,
+        nameSpace = nameSpace,
+        cmdId = cmdId,
+        appendCrc = false
+    )
+
+    /**
+     * 生成硬件录音推流使能帧 (官方抓包 Packet 19367 证实：12 字节)
+     * 01 00 09 00 00 [seq:1B] 03 2d 1a 00 00 00
+     */
+    fun hardwareRecordTrigger(): ByteArray {
+        return ByteArray(12).apply {
+            this[0] = 0x01
+            this[1] = 0x00
+            this[2] = 0x09
+            this[3] = 0x00
+            this[4] = 0x00
+            this[5] = (seq and 0xFF).toByte()
+            this[6] = 0x03 // NameSpace = 3 (Hardware)
+            this[7] = 0x2d // CommandId = 0x2d
+            this[8] = 0x1a // 26
+            this[9] = 0x00
+            this[10] = 0x00
+            this[11] = 0x00
+            seq = (seq + 1) and 0xFF
+        }
+    }
+
+    /**
+     * 生成 GMA ACK 响应帧 (官方抓包 Packet 19378 证实：12 字节)
+     * 01 00 09 00 00 [msgId:1B] 03 0f 0d 00 00 00
+     */
+    fun makeGmaAck(msgId: Int): ByteArray {
+        return ByteArray(12).apply {
+            this[0] = 0x01
+            this[1] = 0x00
+            this[2] = 0x09
+            this[3] = 0x00
+            this[4] = 0x00
+            this[5] = (msgId and 0xFF).toByte()
+            this[6] = 0x03
+            this[7] = 0x0f
+            this[8] = 0x0d
+            this[9] = 0x00
+            this[10] = 0x00
+            this[11] = 0x00
+        }
+    }
 
     /** node 初始化帧（带 GCSP 封装与 CRC） */
     fun nodeInitFrame(): ByteArray = wrap(buildNodeInit())

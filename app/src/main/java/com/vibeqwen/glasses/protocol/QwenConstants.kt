@@ -20,18 +20,26 @@ object QwenConstants {
     const val CID_CONTROL_OUT = 0x004A
 
     // ── 音频帧 ──
+    /** 核心私有音频魔数 (4B: 07 01 86 08，跨 BLE 与 RFCOMM 通用) */
+    val AUDIO_MAGIC_CORE = byteArrayOf(
+        0x07.toByte(), 0x01.toByte(), 0x86.toByte(), 0x08.toByte()
+    )
     /** BLE L2CAP 帧头魔数 (395B 帧长，真实抓包实测确认) */
     val AUDIO_MAGIC_BLE = byteArrayOf(
         0x89.toByte(), 0x01.toByte(), 0x07.toByte(), 0x01.toByte(),
         0x86.toByte(), 0x08.toByte()
     )
-    /** 经典蓝牙/兼容帧头魔数 (398B 帧长) */
+    /** 经典蓝牙原始抓包帧头魔数 (398B 帧长) */
     val AUDIO_MAGIC_CLASSIC = byteArrayOf(
         0x87.toByte(), 0xEF.toByte(), 0x12.toByte(), 0x03.toByte(),
         0x07.toByte(), 0x01.toByte(), 0x86.toByte(), 0x08.toByte()
     )
     /** 默认静态魔数（保持向后兼容） */
     val AUDIO_MAGIC = AUDIO_MAGIC_CLASSIC
+
+    /** 标准 RFCOMM Socket 流单帧总长 (9B 头部 + 384B PCM = 393B) */
+    const val AUDIO_FRAME_SIZE_STREAM = 393
+    const val AUDIO_HEADER_SIZE_STREAM = 9
 
     /** BLE 单帧总长 (11B 头部 + 384B PCM) */
     const val AUDIO_FRAME_SIZE_BLE = 395
@@ -43,7 +51,7 @@ object QwenConstants {
 
     /** 单帧总长（默认向后兼容） */
     const val AUDIO_FRAME_SIZE = AUDIO_FRAME_SIZE_CLASSIC
-    /** 帧头长度（魔数8 + 序号1 + 填充4） */
+    /** 帧头长度 */
     const val AUDIO_HEADER_SIZE = AUDIO_HEADER_SIZE_CLASSIC
     /** 帧尾填充字节数 */
     const val AUDIO_TAIL_SIZE = 1

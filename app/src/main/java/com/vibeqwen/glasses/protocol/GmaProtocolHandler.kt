@@ -105,10 +105,10 @@ object GmaProtocolHandler {
                 val msgId = msgIdLow or (msgIdHigh shl 8)
                 LogCollector.p("GMA 二进制命令: CID=0x%04X, cmd=0x%04X, msgId=0x%04X, flag=0x%02X".format(cid, cmdId, msgId, flag))
 
-                // 回复官方抓包确认的标准 GMA 应答 (14 字节)
-                // 格式：0C 00 01 00 09 00 00 [MsgId: 2B] 0F 0D 00 00 00
+                // 回复官方抓包确认的标准 GMA 应答 (12 字节应用层有效载荷，系统底层自动前置 0x0C 0x00 SDU 长度)
+                // 格式：01 00 09 00 00 [MsgId: 2B] 0F 0D 00 00 00
                 val ack = byteArrayOf(
-                    0x0C, 0x00, 0x01, 0x00, 0x09, 0x00, 0x00,
+                    0x01, 0x00, 0x09, 0x00, 0x00,
                     msgIdLow.toByte(), msgIdHigh.toByte(),
                     0x0F, 0x0D, 0x00, 0x00, 0x00
                 )

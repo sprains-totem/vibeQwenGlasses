@@ -97,30 +97,14 @@ class QwenFrameParser {
     }
 
     private fun findNextMagic(from: Int): MatchResult? {
+        val magicCore = QwenConstants.AUDIO_MAGIC_CORE
         val magicBle = QwenConstants.AUDIO_MAGIC_BLE
         val magicClassic = QwenConstants.AUDIO_MAGIC_CLASSIC
         var i = from
-        val limit = buf.size - magicBle.size
+        val limit = buf.size - magicCore.size
 
         while (i <= limit) {
-            // 先尝试匹配 6 字节 BLE 魔数 (89 01 07 01 86 08)
-            var okBle = true
-            for (j in magicBle.indices) {
-                if (buf[i + j] != magicBle[j]) {
-                    okBle = false
-                    break
-                }
-            }
-            if (okBle) {
-                return MatchResult(
-                    idx = i,
-                    frameSize = QwenConstants.AUDIO_FRAME_SIZE_BLE,
-                    headerSize = QwenConstants.AUDIO_HEADER_SIZE_BLE,
-                    seqOffset = 6
-                )
-            }
-
-            // 再尝试匹配 8 字节经典魔数 (87 EF 12 03 07 01 86 08)
+            // 1. 尝试匹配 8 字节经典抓包魔数 (87 EF 12 03 07 01 86 08)
             if (i <= buf.size - magicClassic.size) {
                 var okClassic = true
                 for (j in magicClassic.indices) {
@@ -137,6 +121,42 @@ class QwenFrameParser {
                         seqOffset = 8
                     )
                 }
+            }
+
+            // 2. 尝试匹配 6 字节 BLE 魔数 (89 01 07 01 86 08)
+            if (i <= buf.size - magicBle.size) {
+                var okBle = true
+                for (j in magicBle.indices) {
+                    if (buf[i + j] != magicBle[j]) {
+                        okBle = false
+                        break
+                    }
+                }
+                if (okBle) {
+                    return MatchResult(
+                        idx = i,
+                        frameSize = QwenConstants.AUDIO_FRAME_SIZE_BLE,
+                        headerSize = QwenConstants.AUDIO_HEADER_SIZE_BLE,
+                        seqOffset = 6
+                    )
+                }
+            }
+
+            // 3. 尝试匹配 4 字节通用核心魔数 (07 01 86 08)（标准 Android RFCOMM Socket 流）
+            var okCore = true
+            for (j in magicCore.indices) {
+                if (buf[i + j] != magicCore[j]) {
+                    okCore = false
+                    break
+                }
+            }
+            if (okCore) {
+                return MatchResult(
+                    idx = i,
+                    frameSize = QwenConstants.AUDIO_FRAME_SIZE_STREAM,
+                    headerSize = QwenConstants.AUDIO_HEADER_SIZE_STREAM,
+                    seqOffset = 4
+                )
             }
 
             i++
