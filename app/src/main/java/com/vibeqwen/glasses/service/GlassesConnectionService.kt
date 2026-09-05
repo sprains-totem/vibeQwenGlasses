@@ -231,11 +231,11 @@ class GlassesConnectionService : Service() {
                 }
             }
 
-            // 3. 发送 GMA 快速鉴权挑战帧 (0x10)（依据抓包时序，等待 1100ms 再发送）
+            // 3. 发送 GMA 鉴权 Step 1 挑战帧 (0x14)（官方真机抓包 Packet 307 证实：必须先发 0x14 触发眼镜 0x15）
             delay(1100)
-            val challenge = com.vibeqwen.glasses.protocol.QwenFramer.fastAuthChallenge()
-            com.vibeqwen.glasses.util.LogCollector.h("发送 GMA 快速鉴权挑战 (0x10): " + challenge.joinToString("") { "%02X".format(it) })
-            transport?.write(challenge)
+            val challenge14 = com.vibeqwen.glasses.protocol.QwenFramer.authStep1LocalChallenge()
+            com.vibeqwen.glasses.util.LogCollector.h("发送 GMA 本地鉴权 Step 1 (0x14): " + challenge14.joinToString("") { "%02X".format(it) })
+            transport?.write(challenge14)
 
             // 4. 等待眼镜回复 0x13（严格遵守 DEV_SPEC 规范，绝不超时伪造 READY）
             delay(6000)

@@ -101,8 +101,8 @@ object QwenConstants {
     const val PRODUCT_ID = 8665
     /** GMA 设备 UUID (D5A74C04894A4E70C2AE0BDC687904FE) */
     const val DEVICE_UUID = "D5A74C04894A4E70C2AE0BDC687904FE"
-    /** GMA 鉴权 BLE 密钥 */
-    const val DEVICE_BLE_KEY = "19f2bb2b7bff8e994b7e244f65a989c7"
+    /** GMA 鉴权 BLE 密钥（来自 /data/data/com.alibaba.wow/shared_prefs/wow_data.xml 真实提取） */
+    const val DEVICE_BLE_KEY = "95ad82fb2a0d8fd8f6be52b0811f7468"
     /** 设备 SN */
     const val DEVICE_SN = "5200002612240211A002181"
     /** 眼镜蓝牙 MAC（实测：Qwen Glasses G1 191C） */

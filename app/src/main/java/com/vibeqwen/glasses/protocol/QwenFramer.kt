@@ -58,13 +58,30 @@ object QwenFramer {
     }
 
     /**
-     * 生成 GMA 快速鉴权挑战帧 (26 字节，命令 0x10)
-     * 手机向眼镜发起重连挑战，携带 16 字节随机数 RandomA
+     * 生成 GMA 本地鉴权 Step 1 挑战帧 (26 字节，命令 0x14)
+     * 官方抓包真机实测 (Packet 307):
+     * 18 00 01 00 15 00 00 00 00 14 [16B RandomA]
      */
-    fun fastAuthChallenge(randomA: ByteArray = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }): ByteArray {
+    fun authStep1LocalChallenge(randomA: ByteArray = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }): ByteArray {
         return ByteArray(26).apply {
             this[0] = 0x18; this[1] = 0x00; this[2] = 0x01; this[3] = 0x00
             this[4] = 0x15; this[5] = 0x00; this[6] = 0x00; this[7] = 0x00; this[8] = 0x00
+            this[9] = 0x14
+            System.arraycopy(randomA, 0, this, 10, 16)
+        }
+    }
+
+    /**
+     * 生成 GMA 快速鉴权挑战帧 (26 字节，命令 0x10)
+     * 官方抓包真机实测 (Packet 327):
+     * 18 00 01 00 15 00 00 [seq: 2B] 10 [16B RandomA2]
+     */
+    fun fastAuthChallenge(seq: Int = 1, randomA: ByteArray = ByteArray(16).also { java.security.SecureRandom().nextBytes(it) }): ByteArray {
+        return ByteArray(26).apply {
+            this[0] = 0x18; this[1] = 0x00; this[2] = 0x01; this[3] = 0x00
+            this[4] = 0x15; this[5] = 0x00; this[6] = 0x00
+            this[7] = (seq and 0xFF).toByte()
+            this[8] = ((seq shr 8) and 0xFF).toByte()
             this[9] = 0x10
             System.arraycopy(randomA, 0, this, 10, 16)
         }
@@ -72,29 +89,40 @@ object QwenFramer {
 
     /**
      * 生成 GMA 快速鉴权确认帧 (11 字节，命令 0x12)
-     * 收到眼镜 0x11 回包后下发确认
+     * 官方抓包真机实测 (Packet 333):
+     * 09 00 01 00 06 00 00 [seq: 2B] 12 00
      */
-    fun fastAuthConfirm(): ByteArray {
+    fun fastAuthConfirm(seq: Int = 2): ByteArray {
         return byteArrayOf(
-            0x09, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00, 0x01, 0x00, 0x12, 0x00
+            0x09, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+            (seq and 0xFF).toByte(), ((seq shr 8) and 0xFF).toByte(),
+            0x12, 0x00
         )
     }
 
     /**
-     * 会话空节点初始化帧（12 字节，包号 2，载荷 "{}"）
+     * 会话空节点初始化帧（12 字节，包号 3，载荷 "{}"）
+     * 官方抓包真机实测 (Packet 336):
+     * 0a 00 01 00 07 00 00 03 00 03 7b 7d
      */
-    fun emptyNodeInitFrame(): ByteArray {
+    fun emptyNodeInitFrame(seq: Int = 3): ByteArray {
         return byteArrayOf(
-            0x0a, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00, 0x02, 0x00, 0x03, 0x7b, 0x7d
+            0x0a, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00,
+            (seq and 0xFF).toByte(), ((seq shr 8) and 0xFF).toByte(),
+            0x03, 0x7b, 0x7d
         )
     }
 
     /**
-     * 会话 CBOR 系统信息帧（146 字节，官方抓包严格一致）
+     * 会话 CBOR 系统信息帧（146 字节，官方抓包真机实测 Packet 337）
      */
-    fun cborSystemInfoFrame(peerMac: String = "55:55:55:55:55:55"): ByteArray {
+    fun cborSystemInfoFrame(peerMac: String = "de:1b:47:f9:a2:64", seq: Int = 4): ByteArray {
         val baos = ByteArrayOutputStream()
-        baos.write(byteArrayOf(0x90.toByte(), 0x00, 0x01, 0x00, 0x8d.toByte(), 0x08, 0x00, 0x03, 0x00, 0x01))
+        baos.write(byteArrayOf(
+            0x90.toByte(), 0x00, 0x01, 0x00, 0x8d.toByte(), 0x08, 0x00,
+            (seq and 0xFF).toByte(), ((seq shr 8) and 0xFF).toByte(),
+            0x01
+        ))
         baos.write(0xbf)
         baos.write("haddrType".toByteArray(Charsets.ISO_8859_1))
         baos.write(0x02)
