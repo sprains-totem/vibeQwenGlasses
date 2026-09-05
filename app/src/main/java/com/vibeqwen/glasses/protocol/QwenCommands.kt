@@ -86,16 +86,24 @@ object QwenCommands {
     // ── 录音控制 ──
 
     /**
-     * 开始录音：返回 3 条顺序发送的 JSON。
-     * sessionId = 毫秒时间戳前 10 位；taskLinkId = "AudioRecording" + 时间戳 + 32 位大写 HEX；
-     * wakeupType = longRecord；reason = touch。
+     * 开始录音：返回 6 条顺序发送的完整 GMA / GCSP 控制帧。
+     * 1. 业务请求 (AudioRecording)
+     * 2. 场景激活 (scene=AudioRecording, wakeupType=longRecord)
+     * 3. 页面协议 (airecord://start)
+     * 4. 底层推流通道建立确认 (type=4, arg1=sessionId, arg2=0)
+     * 5. 状态同步切入 Running (status=Running, reason=CLOUD)
+     * 6. 音频格式声明 (.ogg / sceneContexts)
      */
     fun startRecord(): List<String> {
         val ts = System.currentTimeMillis()
-        val sessionId = ts.toString().take(10)
+        val sessionIdInt = (ts / 1000).toInt()
+        val sessionIdStr = ts.toString().take(10)
         val taskLinkId = "AudioRecording$ts${randomHex32()}"
+        val traceId = "212bd951${ts}6886d0faf"
+        val dialogId = "44354137344330345f313538343930313134353939363435383135335f7ffffe5f96325f5d"
         val dataReason = buildJsonObject { put("reason", "touch") }
 
+        // 1. AudioRecording 业务请求
         val j1 = buildJsonObject {
             put("code", "AudioRecording")
             put("data", dataReason)
@@ -105,32 +113,123 @@ object QwenCommands {
                     put("bizType", "live")
                 }
             )
-            put("sessionId", sessionId)
+            put("sessionId", sessionIdStr)
+            put("traceId", traceId)
         }.toString()
 
+        // 2. AudioRecording 场景激活
         val j2 = buildJsonObject {
             put("data", dataReason)
             put("scene", "AudioRecording")
-            put("sessionId", sessionId)
+            put("sessionId", sessionIdStr)
             put("taskLinkId", taskLinkId)
+            put("traceId", traceId)
             put("wakeupType", "longRecord")
         }.toString()
 
+        // 3. AI Record 页面跳转协议
         val j3 = buildJsonObject {
-            put("data", dataReason)
+            put("data", buildJsonObject {
+                put("dialogId", dialogId)
+                put("reason", "touch")
+            })
             put("pageType", "SCHEME_AIRECORD_START")
-            put("sessionId", sessionId)
+            put("sessionId", sessionIdStr)
+            put("traceId", traceId)
             put("uri", "airecord://start")
         }.toString()
 
-        return listOf(j1, j2, j3)
+        // 4. 底层推流通道建立确认（type:4, arg1=sessionId, arg2=0）
+        val j4 = buildJsonObject {
+            put("type", 4)
+            put("arg1", sessionIdInt)
+            put("arg2", 0)
+        }.toString()
+
+        // 5. 状态同步切入 Running
+        val j5 = buildJsonObject {
+            put("code", "AudioRecording")
+            put("traceId", traceId)
+            put("status", "Running")
+            put("reason", "CLOUD")
+            put("reasonStop", null as String?)
+            put("hint", "")
+            put("context", buildJsonObject {
+                put("taskLinkId", taskLinkId)
+                put("scene", "AudioRecording")
+                put("sessionId", sessionIdInt)
+            }.toString())
+        }.toString()
+
+        // 6. 音频通道格式声明 (.ogg / sceneContexts)
+        val j6 = buildJsonObject {
+            put("format", ".ogg")
+            put("sceneContexts", buildJsonObject {
+                put("taskLinkId", taskLinkId)
+                put("scene", "AudioRecording")
+            })
+            put("eventContext", buildJsonObject {
+                put("taskLayer", buildJsonObject {
+                    put("current", buildJsonObject {
+                        put("code", "AudioRecording")
+                        put("context", buildJsonObject {
+                            put("taskLinkId", taskLinkId)
+                            put("scene", "AudioRecording")
+                            put("sessionId", sessionIdInt)
+                        })
+                        put("reason", "CLOUD")
+                    })
+                    put("background", buildJsonArray {})
+                })
+            })
+        }.toString()
+
+        return listOf(j1, j2, j3, j4, j5, j6)
     }
 
-    /** 停止录音：PART + code 两条 JSON */
-    fun stopRecord(): List<String> = listOf(
+    /** 停止录音：PART + code + type:4 停止确认 */
+    fun stopRecord(sessionId: Int = 0): List<String> = listOf(
         """{"type":"PART","codeList":["AudioRecording"]}""",
         """{"code":"AudioRecording"}""",
+        buildJsonObject {
+            put("type", 4)
+            put("arg1", sessionId)
+            put("arg2", 1)
+        }.toString()
     )
+
+    /** 构造 UpdateDeviceStatusResp 应答帧 */
+    fun updateDeviceStatusResp(requestId: String = randomHex32(), streamId: Int = 100): String {
+        val ts = System.currentTimeMillis()
+        val innerData = buildJsonObject {
+            put("attachmentCount", 0)
+            put("bizGroup", "SG02")
+            put("bizType", "AILABS")
+            put("commandType", "response")
+            put("commands", buildJsonArray {
+                add(buildJsonObject {
+                    put("commandDomain", "AliGenie.System.DeviceMirror")
+                    put("commandId", randomHex32().lowercase())
+                    put("commandName", "UpdateDeviceStatusResp")
+                    put("payload", buildJsonObject {
+                        put("code", 200)
+                        put("message", "success")
+                    })
+                    put("streamId", streamId)
+                })
+            })
+            put("isLast", true)
+            put("requestId", requestId)
+            put("uuid", QwenConstants.DEVICE_UUID)
+            put("version", "3.0")
+        }.toString()
+
+        return buildJsonObject {
+            put("code", 0)
+            put("data", innerData)
+            put("sessionId", (ts / 1000).toInt())
+        }.toString()
+    }
 
     /** props 查询（握手后可选项） */
     fun queryProps(): String =

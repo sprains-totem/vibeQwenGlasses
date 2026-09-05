@@ -279,6 +279,18 @@ class GlassesConnectionService : Service() {
         com.vibeqwen.glasses.util.LogCollector.p("收到JSON: ${text.take(120)}")
         // 喂握手状态机（驱动 READY）
         handshake?.onGlassesEvent(text)
+
+        // 自动应答眼镜的状态同步请求 (UpdateDeviceStatus / SynchronizeStatus)
+        if (text.contains("UpdateDeviceStatus") || text.contains("SynchronizeStatus")) {
+            scope.launch {
+                val sid = (System.currentTimeMillis() / 1000).toInt()
+                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson("""{"sessionId":$sid}"""))
+                val resp = com.vibeqwen.glasses.protocol.QwenCommands.updateDeviceStatusResp()
+                com.vibeqwen.glasses.util.LogCollector.h("←回复 UpdateDeviceStatusResp")
+                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(resp))
+            }
+        }
+
         when (val ev = QwenEvents.parse(text).kind) {
             EventKind.RECORD_START -> Log.i(TAG, "眼镜事件: record_start")
             EventKind.RECORD_END -> Log.i(TAG, "眼镜事件: record_end")
@@ -326,6 +338,9 @@ class GlassesConnectionService : Service() {
             }
             pipeline?.writeFrame(frame.pcm)
             publish { it.copy(frames = it.frames + 1) }
+            if (frameParser.totalFrames % 50 == 1L) {
+                com.vibeqwen.glasses.util.LogCollector.r("★ 收到音频流: 第 ${frameParser.totalFrames} 帧 (seq=${frame.seq}, 384B PCM)")
+            }
         }
     }
 

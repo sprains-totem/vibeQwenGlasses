@@ -55,12 +55,15 @@ class QwenCommandsTest {
     }
 
     @Test
-    fun `停止录音生成2条指令`() {
-        val msgs = QwenCommands.stopRecord()
-        assertEquals(2, msgs.size)
+    fun `停止录音生成3条指令`() {
+        val msgs = QwenCommands.stopRecord(12345)
+        assertEquals(3, msgs.size)
         assertTrue(msgs[0].contains("\"type\":\"PART\""))
         assertTrue(msgs[0].contains("AudioRecording"))
         assertEquals("""{"code":"AudioRecording"}""", msgs[1])
+        assertTrue(msgs[2].contains("\"type\":4"))
+        assertTrue(msgs[2].contains("\"arg1\":12345"))
+        assertTrue(msgs[2].contains("\"arg2\":1"))
     }
 
     @Test

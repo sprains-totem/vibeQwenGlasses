@@ -26,9 +26,22 @@ public class LogCollector {
     private static final int MAX_BUFFER = 5000;
 
     private static final Queue<String> buffer = new ConcurrentLinkedQueue<>();
+    private static final java.util.List<LogListener> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
     private static volatile boolean enabled = true;
     private static volatile Context appContext = null;
     private static final Object fileLock = new Object();
+
+    public interface LogListener {
+        void onLog(String line);
+    }
+
+    public static void addListener(LogListener l) {
+        if (l != null && !listeners.contains(l)) listeners.add(l);
+    }
+
+    public static void removeListener(LogListener l) {
+        if (l != null) listeners.remove(l);
+    }
 
     public static void init(Context context) {
         if (context != null) {
@@ -51,6 +64,14 @@ public class LogCollector {
 
         // 实时追加到 latest.log 文件
         appendToFile(line);
+
+        // 通知 UI 实时监听器
+        for (LogListener l : listeners) {
+            try {
+                l.onLog(line);
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     private static void ensureLatestLogHeader() {

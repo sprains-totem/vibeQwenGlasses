@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bluetooth
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material3.Icon
@@ -29,11 +30,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
 import com.vibeqwen.glasses.ui.connect.ConnectScreen
 import com.vibeqwen.glasses.ui.connect.ConnectViewModel
+import com.vibeqwen.glasses.ui.logs.LogScreen
 import com.vibeqwen.glasses.ui.record.RecordScreen
 import com.vibeqwen.glasses.ui.recordings.RecordingsScreen
 import com.vibeqwen.glasses.ui.theme.VibeQwenTheme
 
-/** 单 Activity 应用入口：底部三 Tab（连接 / 录音 / 录音库） */
+/** 单 Activity 应用入口：底部四 Tab（连接 / 录音 / 录音库 / 日志） */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +87,12 @@ private fun MainScreen() {
                     icon = { Icon(Icons.Filled.MusicNote, contentDescription = null) },
                     label = { Text("录音库") },
                 )
+                NavigationBarItem(
+                    selected = tab == 3,
+                    onClick = { tab = 3 },
+                    icon = { Icon(Icons.Filled.Description, contentDescription = null) },
+                    label = { Text("日志") },
+                )
             }
         }
     ) { padding ->
@@ -97,6 +105,7 @@ private fun MainScreen() {
                 0 -> ConnectScreen(onGoRecord = { tab = 1 })
                 1 -> RecordScreen()
                 2 -> RecordingsScreen()
+                3 -> LogScreen()
             }
         }
     }

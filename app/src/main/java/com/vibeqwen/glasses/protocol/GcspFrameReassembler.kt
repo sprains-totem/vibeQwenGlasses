@@ -27,10 +27,15 @@ class GcspFrameReassembler(
 
     private fun drain() {
         while (buffer.size >= 4) {
-            // 1. 检查音频帧魔数头 (87 EF 12 03 07 01 86 08)
-            if (buffer.size >= QwenConstants.AUDIO_FRAME_SIZE && isAudioMagic(0)) {
-                val audioBytes = ByteArray(QwenConstants.AUDIO_FRAME_SIZE) { buffer[it] }
-                buffer.subList(0, QwenConstants.AUDIO_FRAME_SIZE).clear()
+            // 1. 检查音频帧魔数头 (BLE 395B 或 Classic 398B)
+            val audioLen = getAudioFrameLength(0)
+            if (audioLen > 0) {
+                if (buffer.size < audioLen) {
+                    // 数据分包未收全（如 BLE 247B + 148B），等待下一包到达
+                    break
+                }
+                val audioBytes = ByteArray(audioLen) { buffer[it] }
+                buffer.subList(0, audioLen).clear()
                 onAudioFrame(audioBytes)
                 continue
             }
@@ -82,13 +87,30 @@ class GcspFrameReassembler(
         }
     }
 
-    private fun isAudioMagic(offset: Int): Boolean {
-        if (buffer.size < offset + 8) return false
-        val magic = QwenConstants.AUDIO_MAGIC
-        for (i in 0 until 8) {
-            if (buffer[offset + i] != magic[i]) return false
+    private fun getAudioFrameLength(offset: Int): Int {
+        if (buffer.size >= offset + 6) {
+            val magicBle = QwenConstants.AUDIO_MAGIC_BLE
+            var okBle = true
+            for (i in 0 until 6) {
+                if (buffer[offset + i] != magicBle[i]) {
+                    okBle = false
+                    break
+                }
+            }
+            if (okBle) return QwenConstants.AUDIO_FRAME_SIZE_BLE
         }
-        return true
+        if (buffer.size >= offset + 8) {
+            val magicClassic = QwenConstants.AUDIO_MAGIC_CLASSIC
+            var okClassic = true
+            for (i in 0 until 8) {
+                if (buffer[offset + i] != magicClassic[i]) {
+                    okClassic = false
+                    break
+                }
+            }
+            if (okClassic) return QwenConstants.AUDIO_FRAME_SIZE_CLASSIC
+        }
+        return 0
     }
 
     private fun findJsonEnd(): Int {
