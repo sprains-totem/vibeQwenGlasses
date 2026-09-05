@@ -39,7 +39,26 @@ class GcspFrameReassembler(
                 continue
             }
 
-            // 2. 检查 JSON 数据帧（无论底层是否剥离 SDU 长度，亦或跨包分片）：
+            // 2. 检查纯二进制 GMA 命令帧（依据官方规范，PayloadType 位 (flag & 0x0C) == 0 确切为二进制）
+            // 如 0x15 (本地挑战回执), 0x11 (快速鉴权回执), 0x13 (鉴权成功), 0x2009 等
+            if (buffer.size >= 4 && buffer[0] == 0x01.toByte()) {
+                val isBinary = (buffer[3].toInt() and 0x0C) == 0
+                if (isBinary) {
+                    val pduLen = ((buffer[1].toInt() and 0x0F) shl 8) or (buffer[2].toInt() and 0xFF)
+                    val totalFrameLen = 3 + pduLen
+                    if (totalFrameLen in 4..4096) {
+                        if (buffer.size < totalFrameLen) {
+                            break // 数据尚未收全，等待后续分包到达
+                        }
+                        val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
+                        buffer.subList(0, totalFrameLen).clear()
+                        onGmaCommand(0x0001, frameBytes)
+                        continue
+                    }
+                }
+            }
+
+            // 3. 检查 JSON 数据帧（无论底层是否剥离 SDU 长度，亦或跨包分片）：
             val jsonStart = buffer.indexOf('{'.code.toByte())
             if (jsonStart >= 0) {
                 val jsonEnd = findJsonEnd(jsonStart)
@@ -90,21 +109,6 @@ class GcspFrameReassembler(
                 } else {
                     // JSON 未完整闭合，等待下一包到达（保留缓冲区数据）
                     break
-                }
-            }
-
-            // 3. 检查纯二进制 GMA 命令 (如 0x15, 0x11, 0x13, 0x2009 等，以 0x01 开头且前 3 字节声明长度)
-            if (buffer.size >= 3 && buffer[0] == 0x01.toByte()) {
-                val pduLen = ((buffer[1].toInt() and 0x0F) shl 8) or (buffer[2].toInt() and 0xFF)
-                val totalFrameLen = 3 + pduLen
-                if (totalFrameLen in 4..4096) {
-                    if (buffer.size < totalFrameLen) {
-                        break // 数据尚未收全，等待后续分包到达
-                    }
-                    val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
-                    buffer.subList(0, totalFrameLen).clear()
-                    onGmaCommand(0x0001, frameBytes)
-                    continue
                 }
             }
 
