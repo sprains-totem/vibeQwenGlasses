@@ -40,23 +40,25 @@ class GcspFrameReassembler(
                 continue
             }
 
-            // 1.5 检查标准 Android LE-CoC 数据帧（已剥离 2 字节 SDU 长度前缀）：
-            // [0..1] 是 CID (0x0001 GMA/GCSP 数据, 0x0000 GCSP 控制)
-            // [2] 是 PDU 长度 byte，整帧长度 = 3 + (buffer[2] & 0xFF)
-            val first2 = (buffer[0].toInt() and 0xFF) or ((buffer[1].toInt() and 0xFF) shl 8)
-            if ((first2 == 0x0001 || first2 == 0x0000) && buffer.size >= 3) {
-                val pduLen = buffer[2].toInt() and 0xFF
+            // 1.5 检查标准 AIS / GCSP 数据帧（3 字节 CommonHeader，已由 Android 协议栈剥离 2 字节 SDU 长度）：
+            // [0]: (channelId & 0x3F) | ((version & 0x03) << 6)
+            // [1]: ((pduLen >> 8) & 0x0F) | ((rfu & 0x07) << 4) | ((isEncrypted & 0x01) << 7)
+            // [2]: pduLen & 0xFF
+            // 整帧长度 = 3 (CommonHeader) + pduLen
+            val chId = buffer[0].toInt() and 0x3F
+            if ((chId == 0x01 || chId == 0x00) && buffer.size >= 3) {
+                val pduLen = ((buffer[1].toInt() and 0x0F) shl 8) or (buffer[2].toInt() and 0xFF)
                 val totalFrameLen = 3 + pduLen
-                if (totalFrameLen in 4..4096) {
+                if (totalFrameLen in 4..8192) {
                     if (buffer.size < totalFrameLen) {
                         break // 数据分包未收全，等待下一包到达
                     }
                     val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
                     buffer.subList(0, totalFrameLen).clear()
-                    if (first2 == 0x0000) {
+                    if (chId == 0x00) {
                         onGcspControl(frameBytes)
                     } else {
-                        dispatchFrame(first2, frameBytes)
+                        dispatchFrame(chId, frameBytes)
                     }
                     continue
                 }
