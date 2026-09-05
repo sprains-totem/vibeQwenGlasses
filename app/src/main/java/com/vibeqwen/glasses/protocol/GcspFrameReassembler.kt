@@ -166,7 +166,7 @@ class GcspFrameReassembler(
                 val jsonStart = frame.indexOf('{'.code.toByte())
                 val jsonEnd = frame.lastIndexOf('}'.code.toByte())
                 if (jsonStart >= 0 && jsonEnd > jsonStart) {
-                    // 官方抓包 Packet 19388/19393 严格确认格式（8 字节）：
+                    // 1. 官方抓包 Packet 19388/19393 严格确认格式（8 字节 ACK）：
                     // 01 00 05 10 00 [msgId:1B] [nameSpace:1B] [cmdId:1B]
                     if (jsonStart >= 8 && frame[3] == 0x24.toByte()) {
                         val ack = byteArrayOf(
@@ -178,10 +178,11 @@ class GcspFrameReassembler(
                     val jsonBytes = frame.copyOfRange(jsonStart, jsonEnd + 1)
                     val jsonStr = String(jsonBytes, Charsets.UTF_8).trim()
 
-                    // 官方抓包 Packet 19383/19384 严格确认：
-                    // 眼镜上报 .ogg / sceneContexts 录音通道声明时，手机必须立即回送 flag=0x14 的 sessionId 响应帧，
-                    // 否则眼镜会认为网络失联、停止推流并播报“手机网络可能存在问题”
-                    if (jsonStart >= 8 && (jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts"))) {
+                    // 2. 官方抓包 Packet 47855/47857/47859/47861 严格确认：
+                    // 当眼镜发送 SynchronizeStatus (nameSpace=0x10) 或 .ogg/sceneContexts (nameSpace=0x16) 会话请求时，
+                    // 手机必须立即回送携带对应 msgId/namespace/cmdId 的 flag=0x14 响应帧，
+                    // 否则眼镜判定与手机网络失联、停止推流并播报“手机网络可能存在问题”
+                    if (jsonStart >= 8 && (frame[6] == 0x10.toByte() || frame[6] == 0x16.toByte() || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus"))) {
                         val sid = (System.currentTimeMillis() / 1000).toInt()
                         val resp = QwenFramer.wrapResponse(
                             """{"sessionId":$sid}""",
@@ -190,7 +191,7 @@ class GcspFrameReassembler(
                             cmdId = frame[7].toInt() and 0xFF,
                             flag = 0x14
                         )
-                        LogCollector.r("←响应眼镜录音推流会话请求 (.ogg/sceneContexts, msgId=0x%02X, sid=%d)".format(frame[5], sid))
+                        LogCollector.r("←响应眼镜推流会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(frame[6], frame[5], sid))
                         onGcspControl(resp)
                     }
 
