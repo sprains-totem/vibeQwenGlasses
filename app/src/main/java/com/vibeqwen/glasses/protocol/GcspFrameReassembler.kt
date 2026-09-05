@@ -93,12 +93,16 @@ class GcspFrameReassembler(
                 }
             }
 
-            // 3. 检查纯二进制 GMA 命令 (如 12 字节 01 00 09 20 等)
-            if (buffer.size >= 12 && buffer[0] == 0x01.toByte() && buffer[1] == 0x00.toByte()) {
-                val cmd = (buffer[2].toInt() and 0xFF) or ((buffer[3].toInt() and 0xFF) shl 8)
-                if (cmd == 0x2009 || cmd == 0x1005 || cmd == 0x0002) {
-                    val frameBytes = ByteArray(12) { buffer[it] }
-                    buffer.subList(0, 12).clear()
+            // 3. 检查纯二进制 GMA 命令 (如 0x15, 0x11, 0x13, 0x2009 等，以 0x01 开头且前 3 字节声明长度)
+            if (buffer.size >= 3 && buffer[0] == 0x01.toByte()) {
+                val pduLen = ((buffer[1].toInt() and 0x0F) shl 8) or (buffer[2].toInt() and 0xFF)
+                val totalFrameLen = 3 + pduLen
+                if (totalFrameLen in 4..4096) {
+                    if (buffer.size < totalFrameLen) {
+                        break // 数据尚未收全，等待后续分包到达
+                    }
+                    val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
+                    buffer.subList(0, totalFrameLen).clear()
                     onGmaCommand(0x0001, frameBytes)
                     continue
                 }
