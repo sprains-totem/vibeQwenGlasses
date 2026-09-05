@@ -10,7 +10,7 @@ android {
     namespace = "com.vibeqwen.glasses"
     compileSdk = 34
 
-    val ciRunNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 100
+    val ciRunNumber = 200 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
 
     defaultConfig {
         applicationId = "com.vibeqwen.glasses"

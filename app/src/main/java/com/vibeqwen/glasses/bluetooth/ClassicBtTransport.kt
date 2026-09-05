@@ -1,25 +1,25 @@
 package com.vibeqwen.glasses.bluetooth
 
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
+import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.vibeqwen.glasses.protocol.QwenConstants
 import java.io.IOException
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
- * 经典蓝牙 RFCOMM 传输层。
- *
- * 说明：Android 客户端无法直接指定 L2CAP CID（0x0041/0x004A/0x0048 是抓包视角的 CID），
- * 只能按 RFCOMM 服务 UUID 打开通道。本类提供：
- * - 控制通道：createRfcommSocketToServiceRecord(uuid)，按候选列表依次尝试
- * - 音频通道（可选第二通道，openAudioChannel）：HFP/HSP UUID 候选
- * - 读取循环：持续读取并回调原始字节（是否区分 JSON/音频帧交给上层解复用）
- *
- * 注意：connect() 内含阻塞 IO，必须在后台线程调用（服务内协程/线程完成）。
+ * 蓝牙传输层（支持 BLE GATT 前置链路、L2CAP CoC PSM 130 与 RFCOMM 通道）。
  */
 class ClassicBtTransport(
     private val device: BluetoothDevice,
+    private val context: Context? = null,
     private val controlCandidates: List<UUID> = QwenConstants.DEFAULT_CONTROL_UUIDS,
     private val audioCandidates: List<UUID> = QwenConstants.DEFAULT_AUDIO_UUIDS,
 ) {
@@ -41,6 +41,9 @@ class ClassicBtTransport(
     }
 
     private val tag = "ClassicBtTransport"
+
+    @Volatile
+    private var gatt: BluetoothGatt? = null
 
     @Volatile
     private var controlSocket: BluetoothSocket? = null
@@ -76,7 +79,49 @@ class ClassicBtTransport(
 
     /** L2CAP(PSM=130) 优先，失败回退 RFCOMM 候选 */
     private fun openL2capOrControl(): BluetoothSocket? {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // 官方 APP (classes4.dex GattL2capManager): 先建 BLE GATT 连接并 discoverServices，再连 L2CAP PSM 130
+            if (context != null) {
+                try {
+                    val gattLatch = CountDownLatch(1)
+                    com.vibeqwen.glasses.util.LogCollector.c("正在建立底层 BLE GATT 连接 (TRANSPORT_LE)...")
+                    val g = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        device.connectGatt(context, false, object : BluetoothGattCallback() {
+                            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                                    com.vibeqwen.glasses.util.LogCollector.c("BLE GATT 已连接，请求发现服务...")
+                                    gatt.discoverServices()
+                                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                                    com.vibeqwen.glasses.util.LogCollector.c("BLE GATT 已断开 (status=$status)")
+                                    gattLatch.countDown()
+                                }
+                            }
+                            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                                com.vibeqwen.glasses.util.LogCollector.c("BLE GATT 服务已发现，请求 MTU 1245...")
+                                gatt.requestMtu(1245)
+                                gattLatch.countDown()
+                            }
+                        }, BluetoothDevice.TRANSPORT_LE)
+                    } else {
+                        device.connectGatt(context, false, object : BluetoothGattCallback() {
+                            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                                    gatt.discoverServices()
+                                }
+                            }
+                            override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                                gattLatch.countDown()
+                            }
+                        })
+                    }
+                    gatt = g
+                    val ok = gattLatch.await(5, TimeUnit.SECONDS)
+                    com.vibeqwen.glasses.util.LogCollector.c("GATT 准备就绪: $ok，开始建立 L2CAP PSM=130...")
+                } catch (e: Exception) {
+                    com.vibeqwen.glasses.util.LogCollector.e("GATT 前置连接异常: ${e.message}")
+                }
+            }
+
             try {
                 // 优先使用官方 APP 使用的 Insecure L2CAP 通道 (isSecured = false)
                 val s = device.createInsecureL2capChannel(QwenConstants.L2CAP_PSM)
@@ -179,6 +224,11 @@ class ClassicBtTransport(
         cancelled = true
         tryClose(controlSocket)
         tryClose(audioSocket)
+        try {
+            gatt?.disconnect()
+            gatt?.close()
+        } catch (_: Exception) {}
+        gatt = null
         controlSocket = null
         audioSocket = null
     }

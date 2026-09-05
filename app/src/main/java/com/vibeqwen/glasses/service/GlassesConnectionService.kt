@@ -190,7 +190,7 @@ class GlassesConnectionService : Service() {
         updateNotification()
         com.vibeqwen.glasses.util.LogCollector.c("开始连接 ${device.name} ($mac)")
         scope.launch {
-            val t = ClassicBtTransport(device)
+            val t = ClassicBtTransport(device, context = this@GlassesConnectionService)
             val ok = t.connect(transportListener)
             if (ok) {
                 com.vibeqwen.glasses.util.LogCollector.c("控制通道 (L2CAP PSM 130) 已连接")
