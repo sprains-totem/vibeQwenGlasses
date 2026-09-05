@@ -26,13 +26,12 @@ class GcspFrameReassembler(
     }
 
     private fun drain() {
-        while (buffer.size >= 4) {
+        while (buffer.isNotEmpty()) {
             // 1. 检查音频帧魔数头 (BLE 395B 或 Classic 398B)
             val audioLen = getAudioFrameLength(0)
             if (audioLen > 0) {
                 if (buffer.size < audioLen) {
-                    // 数据分包未收全（如 BLE 247B + 148B），等待下一包到达
-                    break
+                    break // 数据分包未收全，等待下一包到达
                 }
                 val audioBytes = ByteArray(audioLen) { buffer[it] }
                 buffer.subList(0, audioLen).clear()
@@ -40,60 +39,68 @@ class GcspFrameReassembler(
                 continue
             }
 
-            // 1.5 检查标准 AIS / GCSP 数据帧（3 字节 CommonHeader，已由 Android 协议栈剥离 2 字节 SDU 长度）：
-            // [0]: (channelId & 0x3F) | ((version & 0x03) << 6)
-            // [1]: ((pduLen >> 8) & 0x0F) | ((rfu & 0x07) << 4) | ((isEncrypted & 0x01) << 7)
-            // [2]: pduLen & 0xFF
-            // 整帧长度 = 3 (CommonHeader) + pduLen
-            val chId = buffer[0].toInt() and 0x3F
-            if ((chId == 0x01 || chId == 0x00) && buffer.size >= 3) {
-                val pduLen = ((buffer[1].toInt() and 0x0F) shl 8) or (buffer[2].toInt() and 0xFF)
-                val totalFrameLen = 3 + pduLen
-                if (totalFrameLen in 4..8192) {
-                    if (buffer.size < totalFrameLen) {
-                        break // 数据分包未收全，等待下一包到达
-                    }
-                    val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
-                    buffer.subList(0, totalFrameLen).clear()
-                    if (chId == 0x00) {
-                        onGcspControl(frameBytes)
-                    } else {
-                        dispatchFrame(chId, frameBytes)
-                    }
-                    continue
-                }
-            }
+            // 2. 检查 JSON 数据帧（无论底层是否剥离 SDU 长度，亦或跨包分片）：
+            val jsonStart = buffer.indexOf('{'.code.toByte())
+            if (jsonStart >= 0) {
+                val jsonEnd = findJsonEnd(jsonStart)
+                if (jsonEnd > jsonStart) {
+                    // 完整的 JSON 帧已收齐
+                    val jsonBytes = ByteArray(jsonEnd - jsonStart) { buffer[jsonStart + it] }
+                    val jsonStr = String(jsonBytes, Charsets.UTF_8).trim()
 
-            // 2. 检查带外层长度前缀的 GCSP 帧结构：[0..1] LE 长度-2, [2..3] LE CID
-            // 严格限定仅匹配官方规范的合法 CID，杜绝图片/文件二进制数据误判为超大帧
-            if (buffer.size >= 4) {
-                val cid = (buffer[2].toInt() and 0xFF) or ((buffer[3].toInt() and 0xFF) shl 8)
-                if (cid == 0x0001 || cid == 0x0000 || cid == 0x0041 || cid == 0x004A) {
-                    val declaredLen = (buffer[0].toInt() and 0xFF) or ((buffer[1].toInt() and 0xFF) shl 8)
-                    val totalFrameLen = declaredLen + 2
-                    if (totalFrameLen in 4..4096) {
-                        if (buffer.size < totalFrameLen) {
-                            break // 数据尚未收全，等待后续分包到达
+                    // 依据官方抓包严格数学规律，在 '{' 前的 5 字节固定为：
+                    // [jsonStart - 5]: flag
+                    // [jsonStart - 4]: segment
+                    // [jsonStart - 3]: msgId
+                    // [jsonStart - 2]: nameSpace
+                    // [jsonStart - 1]: cmdId
+                    if (jsonStart >= 5) {
+                        val flag = buffer[jsonStart - 5].toInt() and 0xFF
+                        val msgId = buffer[jsonStart - 3].toInt() and 0xFF
+                        val ns = buffer[jsonStart - 2].toInt() and 0xFF
+                        val cmd = buffer[jsonStart - 1].toInt() and 0xFF
+
+                        // (A) 官方抓包 Packet 19388/19393 确认的 8 字节 ACK：
+                        if (flag == 0x24) {
+                            val ack = byteArrayOf(
+                                0x01, 0x00, 0x05, 0x10, 0x00,
+                                msgId.toByte(), ns.toByte(), cmd.toByte()
+                            )
+                            onGcspControl(ack)
                         }
-                        val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
-                        buffer.subList(0, totalFrameLen).clear()
-                        dispatchFrame(cid, frameBytes)
-                        continue
-                    }
-                }
-            }
 
-            // 3. 检查纯 JSON 文本开头的容错 ({ 开头)
-            if (buffer[0].toInt().toChar() == '{') {
-                val jsonEnd = findJsonEnd()
-                if (jsonEnd > 0) {
-                    val jsonBytes = ByteArray(jsonEnd) { buffer[it] }
+                        // (B) 官方抓包 Packet 47855/47857/47859/47861 确认的 sessionId 响应帧：
+                        if (ns == 0x10 || ns == 0x16 || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus")) {
+                            val sid = (System.currentTimeMillis() / 1000).toInt()
+                            val resp = QwenFramer.wrapResponse(
+                                """{"sessionId":$sid}""",
+                                msgId = msgId,
+                                nameSpace = ns,
+                                cmdId = cmd,
+                                flag = 0x14
+                            )
+                            LogCollector.r("←响应眼镜会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(ns, msgId, sid))
+                            onGcspControl(resp)
+                        }
+                    }
+
                     buffer.subList(0, jsonEnd).clear()
-                    onJson(String(jsonBytes, Charsets.UTF_8))
+                    onJson(jsonStr)
                     continue
                 } else {
-                    // JSON 未完整闭合，等待更多数据
+                    // JSON 未完整闭合，等待下一包到达（保留缓冲区数据）
                     break
+                }
+            }
+
+            // 3. 检查纯二进制 GMA 命令 (如 12 字节 01 00 09 20 等)
+            if (buffer.size >= 12 && buffer[0] == 0x01.toByte() && buffer[1] == 0x00.toByte()) {
+                val cmd = (buffer[2].toInt() and 0xFF) or ((buffer[3].toInt() and 0xFF) shl 8)
+                if (cmd == 0x2009 || cmd == 0x1005 || cmd == 0x0002) {
+                    val frameBytes = ByteArray(12) { buffer[it] }
+                    buffer.subList(0, 12).clear()
+                    onGmaCommand(0x0001, frameBytes)
+                    continue
                 }
             }
 
@@ -128,11 +135,11 @@ class GcspFrameReassembler(
         return 0
     }
 
-    private fun findJsonEnd(): Int {
+    private fun findJsonEnd(from: Int = 0): Int {
         var depth = 0
         var inString = false
         var escaped = false
-        for (i in 0 until buffer.size) {
+        for (i in from until buffer.size) {
             val c = buffer[i].toInt().toChar()
             if (inString) {
                 if (escaped) escaped = false
