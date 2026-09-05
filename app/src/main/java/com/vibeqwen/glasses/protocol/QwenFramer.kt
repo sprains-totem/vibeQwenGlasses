@@ -145,9 +145,9 @@ object QwenFramer {
     }
 
     /**
-     * 封装 GCSP v2 数据帧（带校验和）
+     * 封装 GCSP 数据帧（官方 BLE L2CAP 抓包证实：JSON 数据帧无末尾 CRC）
      */
-    fun wrap(payload: ByteArray, msgType: Int = 1, cid: Int = 1, appendCrc: Boolean = true): ByteArray {
+    fun wrap(payload: ByteArray, msgType: Int = 1, cid: Int = 1, appendCrc: Boolean = false): ByteArray {
         val headerLen = 10
         val crcLen = if (appendCrc) 2 else 0
         val total = headerLen + payload.size + crcLen
@@ -165,7 +165,7 @@ object QwenFramer {
         // 载荷
         buf.put(payload)
 
-        // CRC-16 校验和 (大端 MSB 前，LSB 后)
+        // CRC-16 校验和 (若启用)
         if (appendCrc) {
             val crc = crc16(buf.array(), 0, headerLen + payload.size)
             buf.put(((crc shr 8) and 0xFF).toByte())
@@ -175,9 +175,9 @@ object QwenFramer {
         return buf.array()
     }
 
-    /** 封装 JSON 字符串为 GCSP 帧 */
+    /** 封装 JSON 字符串为 GCSP 帧 (appendCrc = false) */
     fun wrapJson(json: String, msgType: Int = 1): ByteArray =
-        wrap(json.toByteArray(Charsets.UTF_8), msgType = msgType)
+        wrap(json.toByteArray(Charsets.UTF_8), msgType = msgType, appendCrc = false)
 
     /** node 初始化帧（带 GCSP 封装与 CRC） */
     fun nodeInitFrame(): ByteArray = wrap(buildNodeInit())

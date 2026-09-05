@@ -195,18 +195,14 @@ class GlassesConnectionService : Service() {
             if (ok) {
                 com.vibeqwen.glasses.util.LogCollector.c("控制通道 (L2CAP PSM 130) 已连接")
                 transport = t
-                // 并行建立经典蓝牙 RFCOMM Channel 16 高清音频推流通道
-                scope.launch {
-                    t.openAudioChannel(transportListener)
-                }
-                startHandshake()
+                startHandshake(device)
             } else {
                 com.vibeqwen.glasses.util.LogCollector.e("传输层连接失败")
             }
         }
     }
 
-    private fun startHandshake() {
+    private fun startHandshake(device: android.bluetooth.BluetoothDevice) {
         publish {
             it.copy(connection = ConnectionState.HANDSHAKING, message = "正在与眼镜握手…")
         }
@@ -239,10 +235,14 @@ class GlassesConnectionService : Service() {
             com.vibeqwen.glasses.util.LogCollector.h("发送 GMA 快速鉴权挑战 (0x10): " + challenge.joinToString("") { "%02X".format(it) })
             transport?.write(challenge)
 
-            // 4. 超时安全保护：若 2.5 秒内未完成快速鉴权（如老固件），直接启动 JSON 握手
+            // 4. 超时安全保护：若 2.5 秒内未完成快速鉴权，发送初始化配置并启动 JSON 握手
             delay(2500)
             if (handshake == null) {
-                com.vibeqwen.glasses.util.LogCollector.h("未收到 0x13 鉴权成功通知，直接启动 JSON 握手")
+                com.vibeqwen.glasses.util.LogCollector.h("未收到 0x13 鉴权成功通知，补发初始化配置并启动握手")
+                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.emptyNodeInitFrame())
+                delay(100)
+                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.cborSystemInfoFrame(device.address))
+                delay(150)
                 startJsonHandshake()
             }
         }
