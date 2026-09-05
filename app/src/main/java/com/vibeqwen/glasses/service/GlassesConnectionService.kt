@@ -215,35 +215,40 @@ class GlassesConnectionService : Service() {
             val negReq = com.vibeqwen.glasses.protocol.QwenFramer.versionNegFrame(1)
             com.vibeqwen.glasses.util.LogCollector.h("发送 GCSP 版本协商请求: " + negReq.joinToString("") { "%02X".format(it) })
             transport?.write(negReq)
-            delay(200)
 
             // 2. 注册鉴权成功回调
+            var authenticated = false
             com.vibeqwen.glasses.protocol.GmaProtocolHandler.onAuthSuccess = {
+                authenticated = true
                 scope.launch {
-                    com.vibeqwen.glasses.util.LogCollector.c("鉴权成功，发送空 node 初始化与 CBOR 系统信息...")
+                    com.vibeqwen.glasses.util.LogCollector.c("★★★★★ 收到眼镜 0x13 AUTH_SUCCESS，GMA 鉴权确凿通过！ ★★★★★")
                     transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.emptyNodeInitFrame())
                     delay(100)
-                    val cbor = com.vibeqwen.glasses.protocol.QwenFramer.cborSystemInfoFrame()
+                    val cbor = com.vibeqwen.glasses.protocol.QwenFramer.cborSystemInfoFrame(device.address)
                     transport?.write(cbor)
                     delay(150)
                     startJsonHandshake()
                 }
             }
 
-            // 3. 发送 GMA 快速鉴权挑战帧 (0x10)
+            // 3. 发送 GMA 快速鉴权挑战帧 (0x10)（依据抓包时序，等待 1100ms 再发送）
+            delay(1100)
             val challenge = com.vibeqwen.glasses.protocol.QwenFramer.fastAuthChallenge()
             com.vibeqwen.glasses.util.LogCollector.h("发送 GMA 快速鉴权挑战 (0x10): " + challenge.joinToString("") { "%02X".format(it) })
             transport?.write(challenge)
 
-            // 4. 超时安全保护：若 2.5 秒内未完成快速鉴权，发送初始化配置并启动 JSON 握手
-            delay(2500)
-            if (handshake == null) {
-                com.vibeqwen.glasses.util.LogCollector.h("未收到 0x13 鉴权成功通知，补发初始化配置并启动握手")
-                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.emptyNodeInitFrame())
-                delay(100)
-                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.cborSystemInfoFrame(device.address))
-                delay(150)
-                startJsonHandshake()
+            // 4. 等待眼镜回复 0x13（严格遵守 DEV_SPEC 规范，绝不超时伪造 READY）
+            delay(6000)
+            if (!authenticated) {
+                com.vibeqwen.glasses.util.LogCollector.e("❌ GMA 鉴权失败：6秒内未收到眼镜 0x13 确认，阻断进入 READY")
+                publish {
+                    it.copy(
+                        connection = ConnectionState.ERROR,
+                        lastError = "GMA 快速鉴权失败 (未收到眼镜 0x13 AUTH_SUCCESS)",
+                        message = "鉴权未通过，已阻断伪就绪"
+                    )
+                }
+                updateNotification()
             }
         }
     }

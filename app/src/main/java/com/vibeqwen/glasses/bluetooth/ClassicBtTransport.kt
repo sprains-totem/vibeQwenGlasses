@@ -3,6 +3,8 @@ package com.vibeqwen.glasses.bluetooth
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothGattCharacteristic
+import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothSocket
 import android.content.Context
@@ -96,10 +98,59 @@ class ClassicBtTransport(
                                     gattLatch.countDown()
                                 }
                             }
+
                             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                                com.vibeqwen.glasses.util.LogCollector.c("BLE GATT 服务已发现，请求 MTU 1245...")
+                                com.vibeqwen.glasses.util.LogCollector.c("BLE GATT 服务已发现 (status=$status)")
+                                for (svc in gatt.services) {
+                                    for (ch in svc.characteristics) {
+                                        val uuidStr = ch.uuid.toString().uppercase()
+                                        if (uuidStr.contains("FED7") || uuidStr.contains("FED8") || uuidStr.contains("2A05")) {
+                                            com.vibeqwen.glasses.util.LogCollector.c("  发现关键特征: $uuidStr")
+                                        }
+                                    }
+                                }
+
+                                // 1. 使能 AIS_NOTIFY (FED8) 与 CCCD (0x2902)
+                                val cccdUuid = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+                                val aisSvcUuid = UUID.fromString("0000feb3-0000-1000-8000-00805f9b34fb")
+                                val aisCharUuid = UUID.fromString("0000fed7-0000-1000-8000-00805f9b34fb")
+                                val aisNotifyUuid = UUID.fromString("0000fed8-0000-1000-8000-00805f9b34fb")
+
+                                val aisSvc = gatt.getService(aisSvcUuid)
+                                val notifyChar = aisSvc?.getCharacteristic(aisNotifyUuid)
+                                if (notifyChar != null) {
+                                    gatt.setCharacteristicNotification(notifyChar, true)
+                                    val desc = notifyChar.getDescriptor(cccdUuid)
+                                    if (desc != null) {
+                                        com.vibeqwen.glasses.util.LogCollector.c("写入 AIS_NOTIFY (FED8) CCCD 描述符 (0x0002)...")
+                                        desc.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                                        gatt.writeDescriptor(desc)
+                                    }
+                                }
+
+                                // 2. 尝试读取加密特征 FED7 (触发系统 HCI_LE_Start_Encryption)
+                                val readChar = aisSvc?.getCharacteristic(aisCharUuid)
+                                if (readChar != null) {
+                                    com.vibeqwen.glasses.util.LogCollector.c("读取加密特征 FED7 以触发 BLE 链路加密...")
+                                    gatt.readCharacteristic(readChar)
+                                }
+
+                                // 3. 请求 MTU 1245
                                 gatt.requestMtu(1245)
+                            }
+
+                            override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                                com.vibeqwen.glasses.util.LogCollector.c("BLE MTU 协商完成: mtu=$mtu, status=$status")
                                 gattLatch.countDown()
+                            }
+
+                            override fun onDescriptorWrite(gatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+                                com.vibeqwen.glasses.util.LogCollector.c("GATT 描述符写入完成: ${descriptor.uuid} status=$status")
+                                gattLatch.countDown()
+                            }
+
+                            override fun onCharacteristicRead(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                                com.vibeqwen.glasses.util.LogCollector.c("GATT 特征读取响应: ${characteristic.uuid} status=$status")
                             }
                         }, BluetoothDevice.TRANSPORT_LE)
                     } else {
