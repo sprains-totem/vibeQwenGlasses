@@ -168,7 +168,7 @@ class ClassicBtTransport(
                         })
                     }
                     gatt = g
-                    val ok = gattLatch.await(5, TimeUnit.SECONDS)
+                    val ok = gattLatch.await(2, TimeUnit.SECONDS)
                     com.vibeqwen.glasses.util.LogCollector.c("GATT 准备就绪: $ok，开始建立 L2CAP PSM=130...")
                 } catch (e: Exception) {
                     com.vibeqwen.glasses.util.LogCollector.e("GATT 前置连接异常: ${e.message}")

@@ -54,45 +54,45 @@ class QwenHandshake(
                 // 1) 设备查询（抓包原样：连续三条）
                 _state.value = HandshakeState.DEVICE_QUERY
                 send(QwenCommands.queryDevice())
-                delay(QwenConstants.HANDSHAKE_STEP_DELAY_MS)
+                delay(30)
                 send(QwenCommands.queryDevice())
-                delay(QwenConstants.HANDSHAKE_STEP_DELAY_MS)
+                delay(30)
                 send(QwenCommands.queryDeviceEmpty())
-                delay(150)
+                delay(40)
 
                 // 2) calendarSync 配置同步
                 send(QwenCommands.calendarSync())
-                delay(120)
+                delay(40)
 
                 // 3) messageId + phoneType:1 + supportHeicDecode:1
                 _state.value = HandshakeState.MESSAGE_ID
                 send(QwenCommands.messageId())
+                delay(30)
 
-                // 4) 等待眼镜上报 active_data / pairAdv / type:10001（任一种即满足；
-                //    超时宽容：个别固件可能不上报，继续后续认证）
+                // 4) 等待眼镜上报 active_data / pairAdv / type:10001（若已收到直接通行，未收到最多等待 200ms）
                 _state.value = HandshakeState.WAIT_GLASSES_INFO
-                withTimeoutOrNull(QwenConstants.HANDSHAKE_INFO_TIMEOUT_MS) { infoGate.await() }
+                withTimeoutOrNull(200) { infoGate.await() }
 
                 // 5) 认证会话：type:10001 同构 → sessionId → support
                 _state.value = HandshakeState.AUTH_SESSION
                 send(QwenCommands.type10001())
-                delay(QwenConstants.HANDSHAKE_STEP_DELAY_MS)
+                delay(30)
                 send(QwenCommands.sessionId(sessionCounter.incrementAndGet()))
-                delay(QwenConstants.HANDSHAKE_STEP_DELAY_MS)
+                delay(30)
                 send(QwenCommands.support())
-                delay(150)
+                delay(40)
 
                 // 6) SN 认证
                 _state.value = HandshakeState.SN_AUTH
                 send(QwenCommands.snAuth(deviceSn))
-                delay(QwenConstants.HANDSHAKE_STEP_DELAY_MS)
+                delay(40)
 
                 // 7) 手机下发 attach_success 通知眼镜挂载完成（官方抓包证实）
                 _state.value = HandshakeState.WAIT_ATTACH
                 send(QwenCommands.attachSuccess())
-                delay(80)
+                delay(30)
                 send(QwenCommands.amapNavigation())
-                delay(80)
+                delay(30)
                 send(QwenCommands.queryProps())
 
                 _state.value = HandshakeState.READY

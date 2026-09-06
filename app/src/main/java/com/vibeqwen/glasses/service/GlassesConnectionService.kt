@@ -221,16 +221,16 @@ class GlassesConnectionService : Service() {
                 scope.launch {
                     com.vibeqwen.glasses.util.LogCollector.c("★★★★★ 收到眼镜 0x13 AUTH_SUCCESS，GMA 鉴权确凿通过！ ★★★★★")
                     transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.emptyNodeInitFrame())
-                    delay(100)
+                    delay(30)
                     val cbor = com.vibeqwen.glasses.protocol.QwenFramer.cborSystemInfoFrame(device.address)
                     transport?.write(cbor)
-                    delay(150)
+                    delay(40)
                     startJsonHandshake()
                 }
             }
 
             // 3. 发送 GMA 鉴权 Step 1 挑战帧 (0x14)（官方真机抓包 Packet 307 证实：必须先发 0x14 触发眼镜 0x15）
-            delay(1100)
+            delay(80)
             val challenge14 = com.vibeqwen.glasses.protocol.QwenFramer.authStep1LocalChallenge()
             com.vibeqwen.glasses.util.LogCollector.h("发送 GMA 本地鉴权 Step 1 (0x14): " + challenge14.joinToString("") { "%02X".format(it) })
             transport?.write(challenge14)
