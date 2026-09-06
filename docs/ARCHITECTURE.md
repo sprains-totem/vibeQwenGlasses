@@ -1,303 +1,112 @@
-# vibeQwenGlasses — 千问 G1 眼镜录音 APP 架构设计（Android 原生版）
+# vibeQwenGlasses — 千问 G1 眼镜录音系统架构设计规范
 
-> 版本: v0.2（架构草案 · Android 原生）
-> 状态: 待评审
-> 变更记录: v0.2 移除 iOS/Flutter，改为纯 Android 原生（Kotlin），音频输入源从麦克风替换为眼镜蓝牙流
-
----
-
-## 1. 项目定位
-
-**纯 Android 原生 APP（Kotlin + Jetpack Compose）**，直连千问 G1 眼镜，绕开官方 APP 实现：
-
-| 功能 | 说明 |
-|------|------|
-| 连接眼镜 | 经典蓝牙 RFCOMM/L2CAP，复现私有握手协议 |
-| 录音开始/结束 | 发送 `airecord://start` / `PART` 指令控制 |
-| 音频流接收 | 监听 CID 0x0048 数据通道，解析 398B 帧 |
-| 本地保存 | PCM → WAV / AAC/M4A 落盘（复用 vibeARS 管线） |
-| 录音播放器 | 完整播放器（变速/循环/跳转/波形） |
-| 后台录音 | 前台服务 + WakeLock（复用 vibeARS 模式） |
-
-**不包含**：iOS（系统不开放经典蓝牙，已放弃）、Flutter UI（改原生）。
+> 版本: v1.0（实机全体验证版）  
+> 平台: 纯 Android 原生（Kotlin + Jetpack Compose + 协程 Flow）  
+> 目标: 绕开官方 App (`com.alibaba.wow`)，完全自主实现双通道控制、GMA 鉴权、无损 16kHz PCM 录音与专业播放
 
 ---
 
-## 2. 核心设计决策
+## 1. 系统总体架构与分层
 
-### 2.1 复用 vibeARS 音频引擎，替换唯一输入点
-
-vibeARS 的 `AudioPipeline`（vibeARS/android/.../audio/AudioPipeline.kt）是**完全自包含**的：
-- 输入：`AudioRecord.read()` 产生的 PCM 字节流
-- 输出：WAV（RIFF 头写入 + 封口）/ AAC-M4A（MediaCodec+MediaMuxer）、5 分钟无缝切片、幅度/分贝计算、实时上行 AAC
-
-**改造方案**：保持管线输出侧不变，把 `recordLoop()` 中 `audioRecord.read()` 这一个输入点替换为眼镜蓝牙流：
+系统采用严格的分层单向依赖架构，状态由底层通过不可变数据流（StateFlow）向 UI 响应式驱动：
 
 ```
-vibeARS 原输入                           vibeQwenGlasses 新输入
-┌─────────────────────┐                 ┌──────────────────────────────┐
-│ AudioRecord (麦克风) │    ──替换──▶    │ GlassesBtTransport (蓝牙)     │
-│  48kHz/16bit/立体声  │                 │  16kHz/16bit/单声道 PCM 帧流  │
-└─────────┬───────────┘                 └──────────────┬───────────────┘
-          │  ShortArray/ByteArray PCM                   │  398B 帧 → 384B PCM
-          ▼                                             ▼
-┌────────────────────────────────────────────────────────────────────┐
-│ AudioPipeline（复用：WAV/AAC 编码、切片、幅度/分贝、Watchdog）       │
-└────────────────────────────────────────────────────────────────────┘
-```
-
-### 2.2 只做 Android
-
-- Android 经典蓝牙（RFCOMM/L2CAP）对第三方 APP 开放 → 全功能直连。
-- iOS CoreBluetooth 仅支持 BLE，无法访问经典蓝牙私有通道 → **不做 iOS**。
-
----
-
-## 3. 总体架构（分层）
-
-```
-┌───────────────────────────────────────────────────────────────┐
-│                      UI 层 (Jetpack Compose)                  │
-│  ConnectScreen · RecordScreen(实时波形/计时) · RecordingsList │
-│  PlayerSheet(变速/循环/跳转/波形)                              │
-├───────────────────────────────────────────────────────────────┤
-│                    ViewModel / 状态层                          │
-│  ConnectionViewModel · RecordingViewModel · PlayerViewModel   │
-│  连接状态 · 录音状态 · 音频缓冲 · 播放状态                     │
-├───────────────────────────────────────────────────────────────┤
-│                  Service 层 (前台服务, 保活)                   │
-│  GlassesConnectionService                                    │
-│   ├─ 持有蓝牙连接 + 协议会话（进程存活期）                     │
-│   ├─ WakeLock / 通知栏（复用 vibeARS AudioCaptureService 模式）│
-│   └─ 自动重连（眼镜唤醒后恢复）                               │
-├───────────────────────────────────────────────────────────────┤
-│                    协议层 (纯 Kotlin, 可单测)                  │
-│  QwenProtocol                                                    │
-│   ├─ HandshakeStateMachine  握手状态机                         │
-│   ├─ CommandBuilder         指令构造(start/stop/query)         │
-│   ├─ EventParser            事件解析(record_start/end等)       │
-│   └─ FrameParser            398B 音频帧解析                    │
-├───────────────────────────────────────────────────────────────┤
-│                    传输层 (Android 蓝牙)                       │
-│  ClassicBtTransport (RFCOMM socket)                           │
-│   ├─ connect(addr, uuid) / write(bytes) / readLoop()          │
-│   └─ 数据流: 控制通道 JSON + 音频通道 398B 帧                  │
-├───────────────────────────────────────────────────────────────┤
-│                    音频管线 (复用/移植 vibeARS)                │
-│  AudioPipeline (WAV/AAC 切片编码) ← PCM 来自 FrameParser       │
-└───────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                        UI 表现层 (Jetpack Compose)                      │
+│   ConnectScreen (蓝牙扫描与状态卡片) · RecordScreen (波形/计时/分贝)   │
+│   RecordingsScreen (人性化命名列表/单曲状态同步) · MiniPlayerBar (常驻底栏) │
+│   PlayerSheet (交互式波形拖动 Seek · 循环指示 · 下拉变速)                │
+├────────────────────────────────────────────────────────────────────────┤
+│                     播放核心单例 (GlobalAudioPlayer)                    │
+│   - 单一信源 (Single Source of Truth) 统一管理播放状态机                │
+│   - 全局 MediaPlayer 调度、120 等步长波形采样缓存、毫秒级进度流          │
+│   - 状态广播 (isPlaying, positionMs, durationMs, speed, loop, peaks)    │
+├────────────────────────────────────────────────────────────────────────┤
+│                       服务管理层 (前台保活服务)                          │
+│   GlassesConnectionService (前台服务 + WakeLock + 双向总线)             │
+│   ├─ 双通道生命周期管理 (BLE L2CAP CoC 控制 + 经典蓝牙 RFCOMM 16 音频)  │
+│   ├─ 录音状态控制器与看门狗 (4秒用户停止冷却锁，防抖防自动复燃)           │
+│   └─ GlassesBus (全局不可变 UI 状态流与实时波形广播)                    │
+├────────────────────────────────────────────────────────────────────────┤
+│                      协议与帧处理层 (纯 Kotlin)                         │
+│   ├─ GcspFrameReassembler: 权威 PDU 长度定界分发，自动 8B ACK / 会话响应│
+│   ├─ QwenHandshakeProtocol: 8 步握手认证状态机 (驱动进入 READY)        │
+│   ├─ QwenCommands & QwenFramer: 官方 5 步录音激活序列 (J1~J5) 构造     │
+│   └─ QwenFrameParser: 398B 裸帧校验 (8B魔数 + 1B序号 + 384B PCM)       │
+├────────────────────────────────────────────────────────────────────────┤
+│                        底层通信与硬件传输层                             │
+│   ClassicBtTransport:                                                  │
+│   ├─ 控制链路: BluetoothDevice.createL2capChannel(130)                  │
+│   ├─ 音频链路: BluetoothDevice.createRfcommSocketToServiceRecord(...)  │
+│   ├─ 互斥写入: synchronized(writeLock) 杜绝多线程写死锁                │
+│   └─ 异步双读线程: vqg-control-reader + vqg-audio-reader                │
+├────────────────────────────────────────────────────────────────────────┤
+│                        音频存储与编码引擎                               │
+│   AudioPipeline:                                                       │
+│   ├─ 16kHz 16-bit Mono WAV 文件头构建与原子性写入                       │
+│   ├─ 无损 PCM 落盘持久化与分块时间戳切片                                │
+│   └─ 实时 RMS 分贝能量计算与波形抽样                                   │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 4. 模块详细设计
+## 2. 核心模块与技术实现
 
-### 4.1 传输层 `ClassicBtTransport.kt`
+### 2.1 播放器单例架构 (`GlobalAudioPlayer`)
+针对以往局部 ViewModel 导致的“回放页面关闭后无处恢复”、“列表内外播放状态脱节”等问题，将播放器全面重构为应用级全局单例：
+- **全局状态驱动**：暴露统一只读 `StateFlow<GlobalAudioPlayer.State>`，包含当前曲目、播放中标识、播放进度、时长、倍速、循环状态及离线预计算的 120 点波形峰值；
+- **常驻 MiniPlayerBar**：悬浮于主导航栏上方。无论用户处于「连接」「录音」「录音库」还是「日志」任意页面，均可随时查看进度、启停，并点击卡片瞬间唤回全屏 `PlayerSheet`；
+- **全动态波形交互**：彻底移除带有系统兼容性问题的原生灰色 Slider，重构为双色动态波形播放条（已播放青色高亮，未播放暗灰），支持点击任意位置或水平拖拽平滑 Seek；
+- **Android 系统级变速防发声保护**：针对 Android `MediaPlayer.setPlaybackParams()` 强行唤醒暂停音频的系统级缺陷，前置检测 `wasPlaying` 状态并在调速后严格锁定维持暂停。
 
-```
-class ClassicBtTransport(
-    private val device: BluetoothDevice,
-    private val sppUuid: UUID           // 待从 SDP 日志确认
-) {
-    fun connect(): Boolean              // createRfcommSocketToServiceRecord + connect
-    fun write(data: ByteArray)          // 指令下发（JSON 文本）
-    fun startReadLoop(callback: (ByteArray) -> Unit)  // 持续读取
-    fun disconnect()
-}
-```
+### 2.2 传输与通信并发保障 (`ClassicBtTransport`)
+- **双通道独立生命周期**：
+  - 控制通道（L2CAP PSM 130）：主会话生命周期载体。只有该通道断开才触发 `notifyDisconnected()`；
+  - 音频通道（RFCOMM 16）：从属数据通道。录音结束或单次音频流关闭仅释放音频 Reader，绝不影响主控制会话。
+- **并发写互斥锁**：
+  - 底层使用 `synchronized(writeLock)` 串行化所有指令写入，彻底消除了协程任务与后台 ACK 读取线程并发写入引发的 native 句柄阻塞。
 
-**关键点**：
-- 连接方式：`createRfcommSocketToServiceRecord(uuid)`；UUID 需从 HCI 日志 SDP 段或官方 APP 反编译确认（未知项 #1）。
-- 读取循环需**区分两种数据流**（同一 socket 或不同 channel，待确认）：
-  - 控制 JSON（CID 0x0041/0x004A 内容）
-  - 音频帧（CID 0x0048 内容，398B/帧）
-- 若为不同 RFCOMM 通道，则需两次 `createRfcommSocketToServiceRecord` 或使用 `createL2capChannel`（Android 10+）。
+### 2.3 解帧器权威长度定界 (`GcspFrameReassembler`)
+- **定界规范**：
+  以帧前置 2 字节 `pduLen` 为唯一准则（`totalLen = 3 + pduLen`），帧完整即切出，帧不足即等待。
+- **免括号依赖**：
+  彻底废除基于 `{` 字符和括号深度的启发式匹配，彻底解决遥测数据分段包含 `0x7B` 导致解帧器死锁的隐患。
+- **自动握手应答**：
+  - 遇到 `flag == 0x24` 毫秒级回发 8 字节 ACK；
+  - 遇到 `ns == 0x10` 或 `ns == 0x16` 毫秒级回送 `Flag 0x14` 会话响应。
 
-### 4.2 协议层 `QwenProtocol`（纯 Kotlin）
-
-```
-com.vibeqwen.glasses.protocol/
-├── QwenConstants.kt      # CID、魔数头 87 EF 12 03 07 01 86 08、固定参数
-├── QwenHandshake.kt      # 握手状态机
-├── QwenCommands.kt       # startRecord()/stopRecord()/queryDevice()
-├── QwenEvents.kt         # 事件解析
-└── QwenFrameParser.kt    # 398B 帧 → 384B PCM (+ 序列号校验)
-```
-
-**握手状态机**（含异常路径）：
-```
-IDLE → DEVICE_QUERY → MESSAGE_ID → AUTH_RESP → SESSION_SETUP
-     → SN_AUTH → ATTACH_SUCCESS → READY
-READY → RECORD_STARTED → RECORDING → RECORD_STOPPED → READY
-任何状态 → ERROR → reconnect(backoff)
-```
-
-详细协议规格见 [PROTOCOL.md](./PROTOCOL.md)（逆向成果完整存档）。
-
-### 4.3 音频管线 `AudioPipeline`（移植 vibeARS）
-
-**复用代码**（从 vibeARS 复制并改造输入点）：
-- `openNextSlice()` / `closeCurrentSlice()` / `writeWavHeader()` → WAV 切片
-- `configureAacEncoder()` / `encodeAacFrame()` / `drainAacOutputs()` → AAC/M4A
-- 幅度/分贝计算、Watchdog（无数据告警）
-- 输出目录：`/storage/emulated/0/Music/vibeQwenGlasses`（沿用 vibeARS 公共目录优先原则）
-
-**改动点**：
-```
-recordLoop() 中:
-  val readCount = audioRecord.read(...)      // 原: 麦克风
-  ↓
-  val pcmBlock = frameParser.nextPcmBlock()  // 新: 眼镜帧流
-```
-- 采样率硬编码 16000、单声道（眼镜协议固定）。
-- 帧序号连续性检测：丢帧时在 WAV 中插入静音或记录丢帧标记（待定）。
-
-### 4.4 前台服务 `GlassesConnectionService`
-
-移植 vibeARS `AudioCaptureService` 模式：
-- 录音期间 `startForeground`（通知类型视用途：`FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE` 或 `MICROPHONE`）
-- `PARTIAL_WAKE_LOCK`（24h 上限）
-- 服务持有 `ClassicBtTransport` + `AudioPipeline`，Activity 通过 Binder 绑定
-
-### 4.5 UI 层（Jetpack Compose）
-
-| 屏幕 | 内容 |
-|------|------|
-| ConnectScreen | 已配对设备列表（`BluetoothAdapter.getBondedDevices` 过滤 G1）、连接/断开、状态指示 |
-| RecordScreen | 大录音按钮、实时波形（自定义 Canvas）、计时、分贝表 |
-| RecordingsScreen | 录音列表（文件名/时长/大小）、删除、分享、ZIP 导出 |
-| PlayerSheet | 播放器：0.5x-2.0x 变速、±10s 跳转、循环/单曲、波形进度条（移植 vibeARS 播放器功能） |
+### 2.4 录音状态机与防误触机制 (`GlassesConnectionService`)
+- **5 步连发激活**：严格执行官方实测录音激活帧（J1 业务、J2 场景、J3 跳转、J4 硬件推流使能、J5 参数确认），使用 7 位整数 SessionId；
+- **防反向二次触发**：用户主动停止录音后，启动 4 秒防抖冷却锁 `userStoppedCooldownUntil`，并在非录音状态丢弃残留音频帧，杜绝自动死循环复燃。
 
 ---
 
-## 5. 目录结构（目标）
+## 3. 目录与文件布局
 
 ```
-vibeQwenGlasses/
-├── .github/workflows/build-and-release.yml   # CI/CD: Android APK 自动构建发布
-├── app/
-│   ├── build.gradle                          # compileSdk 34, minSdk 26
-│   └── src/main/
-│       ├── AndroidManifest.xml               # 蓝牙权限 + 前台服务声明
-│       └── kotlin/com/vibeqwen/glasses/
-│           ├── MainActivity.kt
-│           ├── ui/
-│           │   ├── theme/Theme.kt
-│           │   ├── connect/ConnectScreen.kt + ConnectViewModel.kt
-│           │   ├── record/RecordScreen.kt + RecordViewModel.kt
-│           │   ├── recordings/RecordingsScreen.kt + RecordingsViewModel.kt
-│           │   └── player/PlayerSheet.kt + PlayerViewModel.kt
-│           ├── service/GlassesConnectionService.kt
-│           ├── bluetooth/
-│           │   ├── ClassicBtTransport.kt
-│           │   └── DeviceScanner.kt
-│           ├── protocol/
-│           │   ├── QwenConstants.kt
-│           │   ├── QwenHandshake.kt
-│           │   ├── QwenCommands.kt
-│           │   ├── QwenEvents.kt
-│           │   └── QwenFrameParser.kt
-│           └── audio/
-│               ├── AudioPipeline.kt          # 移植自 vibeARS（输入点替换）
-│               ├── WavWriter.kt
-│               └── SliceManager.kt
-├── docs/
-│   ├── ARCHITECTURE.md                       # 本文档
-│   └── PROTOCOL.md                           # 逆向协议规格（完整存档）
-├── tools/
-│   ├── analyze_recording.js                  # HCI 日志分析脚本（保留）
-│   └── extract_audio.js                      # 音频帧提取/验证脚本（保留）
-    └── 11_05 .wav                            # 官方 APP 导出参考录音（对照样本）
+vibeQwenGlasses/app/src/main/java/com/vibeqwen/glasses/
+├── MainActivity.kt                 # 单 Activity 入口：底部 4 Tab + 全局 MiniPlayer 与弹层
+├── audio/
+│   ├── AudioPipeline.kt            # 音频存储：PCM 落盘、WAV 格式封装、RMS 能量计算
+│   ├── GlobalAudioPlayer.kt        # 全局单例播放中心（单一信源）
+│   └── RecordingFileManager.kt     # 录音文件管理、人性化命名转换、分享与删除
+├── bluetooth/
+│   ├── BleGlassesScanner.kt        # BLE 0xFEB3 广播扫描
+│   └── ClassicBtTransport.kt       # 经典蓝牙+L2CAP 双通道传输层（互斥写入与状态隔离）
+├── protocol/
+│   ├── GcspFrameReassembler.kt     # GCSP/GMA 权威长度定界解帧器与自动 ACK 引擎
+│   ├── GmaProtocolHandler.kt       # GMA 快速鉴权协议处理器
+│   ├── QwenCommands.kt             # 业务信令与 5 步录音序列构造器
+│   ├── QwenFramer.kt               # GCSP 二进制与 JSON 帧封装器
+│   └── QwenHandshakeProtocol.kt    # 8 步握手认证状态机
+├── service/
+│   ├── GlassesConnectionService.kt # 核心前台服务：链路调度、录音防抖控制
+│   └── GlassesBus.kt               # 状态总线
+└── ui/
+    ├── components/                 # 公共组件：动态双色 WaveformBar、大录音按键
+    ├── connect/                    # 连接页面：设备卡片、扫描、握手状态指示
+    ├── player/                     # 播放组件：MiniPlayerBar、PlayerSheet 交互卡片
+    ├── record/                     # 录音页面：计时器、实时波形、分贝仪表
+    └── recordings/                 # 录音库页面：列表项与播放器双向毫秒级同步
 ```
-
----
-
-## 6. 数据流（录音场景）
-
-```
-用户点击"开始录音"
-  │
-  ▼
-RecordViewModel.startRecording()
-  │
-  ▼
-QwenCommands.startRecord(sessionId, taskLinkId)  →  JSON 字节
-  │
-  ▼
-ClassicBtTransport.write(bytes)  →  蓝牙 → 眼镜
-  │
-  ▼
-眼镜响应 → 事件流 {"eventName":"record_start"}  →  EventParser → 状态=RECORDING
-  │
-  ▼
-眼镜推送音频流 → CID 0x0048 → readLoop  →  QwenFrameParser
-  │                                                  │ 398B/帧
-  ▼                                                  ▼
-状态更新/UI 波形 ◄── onAudioFrame(pcm, amp, db) ◄── 384B PCM
-  │
-  ▼
-AudioPipeline（WAV 或 AAC 编码 + 切片写入）
-  │
-  ▼（用户点击停止）
-QwenCommands.stopRecord() → PART → record_end → 封口 WAV/M4A → 列表刷新
-```
-
----
-
-## 7. 权限清单（Android）
-
-| 权限 | 用途 |
-|------|------|
-| `BLUETOOTH_CONNECT` (API 31+) | 连接/读写经典蓝牙 |
-| `BLUETOOTH_SCAN` (API 31+) | 设备发现 |
-| `BLUETOOTH` / `BLUETOOTH_ADMIN` (API 30-) | 旧版本兼容 |
-| `ACCESS_FINE_LOCATION` (API 30-) | 旧版本蓝牙扫描前提 |
-| `FOREGROUND_SERVICE` + `FOREGROUND_SERVICE_CONNECTED_DEVICE` | 前台服务 |
-| `POST_NOTIFICATIONS` (API 33+) | 通知栏 |
-
----
-
-## 8. 里程碑
-
-| 阶段 | 内容 | 验收标准 |
-|------|------|---------|
-| **M0** | 架构定稿 + 协议文档 | 本文档 + PROTOCOL.md |
-| **M1** | Android 连接 + 握手 | 能连上眼镜、完成 attach_success、收到心跳事件 |
-| **M2** | 录音开始/结束 + 音频落盘 | 录出 WAV 且与官方 APP 导出字节级一致 |
-| **M3** | 录音列表 + 播放器 | 完整 MVP |
-| **M4** | 稳定性：重连/断流/长录音/后台 | 可日常使用 |
-| **M5** | 扩展：AAC、切片、分享/ZIP、云同步 | 完整版 |
-
----
-
-## 9. 未知项与实现前确认清单
-
-| # | 未知项 | 确认方法 | 影响 |
-|---|--------|---------|------|
-| 1 | 眼镜 SPP 服务 UUID / 数据通道 UUID | HCI 日志 SDP 段 / 官方 APP 反编译 | 连接建立方式（M1 前置） |
-| 2 | 控制 JSON 与音频帧是否同一条 RFCOMM 流 | 实测抓流 | 传输层单/双通道设计 |
-| 3 | 握手是否校验 `active_data` | 实验跳过 | 简化握手 |
-| 4 | 录音时长上限 / 断流行为 | 实测 | 可靠性设计 |
-| 5 | 长录音时音频帧序号回绕/丢帧 | 实测 | 丢帧补偿策略 |
-| 6 | 眼镜固件更新是否变更协议 | 版本比对 | 兼容表 |
-
----
-
-## 10. 风险与对策
-
-| 风险 | 等级 | 对策 |
-|------|------|------|
-| SPP UUID 未知导致连不上 | 高 | 解析 HCI 日志 SDP 段（M1 前置任务）；反编译官方 APP 双保险 |
-| 协议带加密/签名 | 中 | HCI 证据表明 JSON 明文；若加密则 Frida 提取密钥 |
-| 官方 APP 与第三方并发连接冲突 | 中 | 测试独占/共存行为；连接时提示用户断开官方 APP |
-| 固件更新变更协议 | 中 | 协议层隔离 + 版本兼容表 |
-| 长录音丢帧 | 低 | 帧序号检测 + 静音补偿 |
-
----
-
-## 11. 下一步行动
-
-1. 评审本文档
-2. **解析 HCI 日志 SDP 段，确认 SPP UUID**（M1 前置，我可以先做）
-3. 搭 Android 工程骨架（Gradle + Compose）
-4. 移植 vibeARS AudioPipeline + 实现 ClassicBtTransport（M1）

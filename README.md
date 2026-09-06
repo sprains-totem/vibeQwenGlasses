@@ -1,56 +1,53 @@
 # vibeQwenGlasses
 
-直连千问 G1 眼镜（绕过官方 APP）的 **Android 原生录音应用**。
+直连千问 G1 眼镜（完全绕过官方 APP）的 **Android 原生无损高清录音与播放应用**。
 
-## 功能
+---
 
-- 🔗 经典蓝牙直连眼镜，复现私有握手协议
-- 🎙️ 录音开始 / 结束（`airecord://start` 指令）
-- 💾 音频流接收（398B 帧 → PCM，按魔数头匹配动态 CID）→ WAV / AAC/M4A
-- ▶️ 完整录音播放器（变速 / 循环 / 跳转 / 波形）
-- 📂 录音列表、删除、分享、ZIP 导出
-- 🔋 前台服务 + WakeLock 后台录音
+## 核心能力与实测指标
 
-## 技术栈
+- 🔗 **双通道原生直连**：BLE L2CAP CoC（PSM 130）控制链路 + 经典蓝牙 RFCOMM（Channel 16 / DLCI 33）私有音频推流。
+- 🤝 **全自主握手协议**：脱离官方云端，全自主完成 GMA 快速鉴权认证与 8 步握手，2 秒极速进入 `READY`。
+- 🎙️ **官方对齐 5 步录音序列**：对齐官方抓包 Packet #19364~#19368，下发业务挂载、唤醒场景、跳转协议、硬件使能（`0x2D, 0x1A`）与推流确认，瞬时激活眼镜端硬件麦克风阵列推流。
+- 💾 **无损高清 PCM 落盘**：实时捕获 398 字节固定裸帧，解码 16kHz 16-bit Mono 无损 PCM 数据流，原子性封装生成标准 WAV 文件。
+- 🎵 **全局单例专业回放系统**：
+  - **`GlobalAudioPlayer` 单一信源**：统一驱动列表项与回放弹层，状态毫秒级无缝同步；
+  - **悬浮常驻 `MiniPlayerBar`**：全局底部常驻迷你控制条，任何页面随时掌控进度、一键唤回详情大图；
+  - **交互式波形播放卡片**：双色动态波形（已播放亮青色/未播放暗灰），支持点击与水平滑动即时 Seek；
+  - **优雅倍速与循环控制**：支持单键切换与精选下拉菜单（`0.75x` ~ `2.0x`），修复 Android 暂停调速自动发声缺陷，配合高亮循环指示器。
+- 🛡️ **工程级稳定性保障**：
+  - 基于权威 PDU 长度定界（`totalLen = 3 + pduLen`），彻底杜绝括号深度计数引起的缓冲区死锁；
+  - 4000ms 录音停止防抖冷却锁，彻底根除音频残留帧反向误触发；
+  - 蓝牙 Socket 写入互斥锁保护，防止多线程并发死锁；
+  - 控制与音频通道生命周期严格隔离，录音启闭不影响主连接。
 
-- **纯 Android 原生**: Kotlin + Jetpack Compose
-- **协议**: 千问 G1 私有蓝牙协议（详见 [docs/PROTOCOL.md](docs/PROTOCOL.md)）
-- **音频管线**: 移植自 [vibeARS](https://github.com/sprains-totem/vibeARS)（输入源由麦克风替换为眼镜蓝牙流）
+---
 
-## 文档
+## 文档索引
 
-- [架构设计](docs/ARCHITECTURE.md) — 分层架构、模块设计、里程碑
-- [协议规格](docs/PROTOCOL.md) — 逆向成果完整存档（握手 / 指令 / 帧格式 / SDP 分析）
-- [组合测试报告](docs/combo_test_report.md) — 4 种发起/结束组合的录音还原验证
-- [tools/](tools/) — HCI 日志分析脚本（Node.js）
-- 协议 / 架构 / 测试报告完整存档（原始抓包与录音样本仅本地保留，不入库）
+- [协议规格说明 (docs/PROTOCOL.md)](docs/PROTOCOL.md) — 官方抓包逆向成果、双通道机制、GCSP/GMA 定界规则、5 步激活序列与帧格式权威规格。
+- [系统架构设计 (docs/ARCHITECTURE.md)](docs/ARCHITECTURE.md) — 分层设计规范、GlobalAudioPlayer 单例实现、并发控制与文件组织。
+- [4 种组合测试报告 (docs/combo_test_report.md)](docs/combo_test_report.md) — 手机/眼镜两端交叉发起与结束录音的还原验证。
 
-## 逆向进展
+---
 
-- ✅ 协议破解：控制通道（CID 0x0041/0x004A JSON）+ 音频通道（398B 帧 = 8B魔数 + 1B序号 + 4B填充 + 384B PCM + 1B填充）
-- ✅ 音频还原与官方 APP 导出**字节级一致**（3402 帧验证）
-- ✅ 4 种录音组合（眼镜/手机 发起 × 眼镜/手机 结束）全部还原成功
-- ✅ 双模型交叉验证（deepseek-v4-flash 与 hy3 独立还原，结果字节级一致）
-- ✅ 关键修正：音频 CID 是**动态**的（0x0047/0x0048 因连接而异），实现须按魔数头匹配
+## 真机实测验证数据
 
-## 状态
+- **测试机型**：OnePlus 6 (Android 14) + 千问 G1 智能眼镜 191C（固件版本 `1.10.0-RS-20260826.0248`）
+- **真机最新安装**：`versionCode=284`, `versionName=1.0.0-284-02b7498`
+- **录音表现**：
+  - 连续采集 3904 帧；
+  - 生成 `rec_20260906_230015.wav`（时长 46 秒，大小 1.4 MB）；
+  - 峰值幅值达 13000+ / 32767，语音极其清晰通透，波形实时绘制。
 
-代码已落地（M0–M3 完成，M4/M5 部分）：
+---
 
-- [x] 协议逆向完成（字节级验证 + 双模型交叉验证）
-- [x] 组合测试验证（4 种发起/结束方式）
-- [x] M1: Android 连接 + 握手（`bluetooth/` + `protocol/`）
-- [x] M2: 录音开始/结束 + 音频落盘（`audio/` + `service/`）
-- [x] M3: 录音列表 + 播放器（Compose UI）
-- [~] M4: 稳定性（断开自动保存已实现；自动重连待实测）
-- [~] M5: 扩展（AAC/M4A、5 分钟切片已实现；ZIP 导出待做）
-
-## 构建
-
-CI（`.github/workflows/build-and-release.yml`）在主分支 push 时自动构建并上传
-`app-release.apk`（debug 签名，可直接安装）与 `app-debug.apk`：
+## 本地构建与安装
 
 ```bash
-# 本地（环境不支持时改走 CI）
-./gradlew assembleDebug assembleRelease
+# 编译 Debug APK
+./gradlew assembleDebug
+
+# 安装至真机（通过 ADB）
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
