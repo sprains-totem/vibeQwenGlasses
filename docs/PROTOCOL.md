@@ -233,3 +233,13 @@ val isBinary = (flag and 0x0C) == 0
    Android 的 `BluetoothSocket.outputStream.write()` 并非多线程安全。协程任务与后台读取线程必须通过互斥锁 `synchronized(writeLock)` 严格串行输出，否则将导致底层蓝牙守护进程 native 句柄挂死。
 4. **音频通道与主连接生命周期隔离**：  
    RFCOMM 音频读取线程断开（例如录音正常结束）绝不代表蓝牙连接断开。仅当控制通道（L2CAP PSM 130）关闭时才允许通知 `onDisconnected`。
+
+---
+
+## 7. 全量遥测与传感器数据 API 指南
+
+千问 G1 眼镜在运行过程中会高频上报光敏接近、镜腿温度、电池与充电盒微伏级参数、六轴体态健康、触控手势、蓝牙射频诊断、视觉 AI 识别等 76 种不同遥测数据。
+
+完整协议字段定义、JSON Schema、映射字典与实战接入代码，请参阅专用教程级规范：
+👉 **[千问 G1 眼镜全量遥测与传感器数据 API 规格指南 (docs/TELEMETRY_API.md)](./TELEMETRY_API.md)**。
+

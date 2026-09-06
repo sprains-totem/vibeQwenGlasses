@@ -26,6 +26,7 @@
 ## 文档索引
 
 - [协议规格说明 (docs/PROTOCOL.md)](docs/PROTOCOL.md) — 官方抓包逆向成果、双通道机制、GCSP/GMA 定界规则、5 步激活序列与帧格式权威规格。
+- [遥测与传感器 API 指南 (docs/TELEMETRY_API.md)](docs/TELEMETRY_API.md) — 教程级详细文档：涵盖光敏佩戴、微伏电池、充电盒监控、六轴体态、触控手势、射频诊断等 76 种遥测事件与接入代码。
 - [系统架构设计 (docs/ARCHITECTURE.md)](docs/ARCHITECTURE.md) — 分层设计规范、GlobalAudioPlayer 单例实现、并发控制与文件组织。
 - [4 种组合测试报告 (docs/combo_test_report.md)](docs/combo_test_report.md) — 手机/眼镜两端交叉发起与结束录音的还原验证。
 
