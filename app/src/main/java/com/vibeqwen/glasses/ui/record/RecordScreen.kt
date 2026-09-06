@@ -115,6 +115,7 @@ fun RecordScreen(
         ) {
             WaveformBar(
                 values = waveform,
+                progress = 1.0f,
                 modifier = Modifier
                     .width(340.dp)
                     .height(110.dp)

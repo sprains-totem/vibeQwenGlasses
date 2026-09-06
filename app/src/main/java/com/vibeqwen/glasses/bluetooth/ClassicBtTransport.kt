@@ -259,13 +259,21 @@ class ClassicBtTransport(
         return null
     }
 
-    /** 写控制指令（线程安全即可，调用方负责串行化） */
+    private val writeLock = Any()
+
+    /** 写控制指令（线程安全同步互斥） */
     fun write(bytes: ByteArray) {
         val sock = controlSocket
-        if (sock == null || !sock.isConnected) return
+        if (sock == null || !sock.isConnected) {
+            com.vibeqwen.glasses.util.LogCollector.e("控制通道未就绪，写被丢弃 (${bytes.size}B)")
+            return
+        }
         try {
-            sock.outputStream.write(bytes)
-            sock.outputStream.flush()
+            synchronized(writeLock) {
+                com.vibeqwen.glasses.util.LogCollector.log("IO", "[control] 发送 ${bytes.size}B: " + bytes.take(24).joinToString("") { "%02X".format(it) })
+                sock.outputStream.write(bytes)
+                sock.outputStream.flush()
+            }
         } catch (e: IOException) {
             listener?.onError("写失败: ${e.message}")
             notifyDisconnected()
@@ -320,7 +328,7 @@ class ClassicBtTransport(
             } catch (e: Exception) {
                 if (!cancelled) listener?.onError("读取异常: ${e.message}")
             } finally {
-                if (!cancelled) {
+                if (!cancelled && !isAudio) {
                     notifyDisconnected()
                 }
             }

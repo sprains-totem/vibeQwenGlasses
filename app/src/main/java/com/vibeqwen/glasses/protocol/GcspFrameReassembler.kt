@@ -26,6 +26,12 @@ class GcspFrameReassembler(
     }
 
     private fun drain() {
+        if (buffer.size > 32768) {
+            LogCollector.e("GCSP 缓冲区溢出保护触发 (${buffer.size}B)，重置缓冲区")
+            buffer.clear()
+            return
+        }
+
         while (buffer.isNotEmpty()) {
             // 1. 检查音频帧魔数头 (BLE 395B 或 Classic 398B)
             val audioLen = getAudioFrameLength(0)
@@ -39,76 +45,75 @@ class GcspFrameReassembler(
                 continue
             }
 
-            // 2. 检查纯二进制 GMA 命令帧（依据官方规范，PayloadType 位 (flag & 0x0C) == 0 确切为二进制）
-            // 如 0x15 (本地挑战回执), 0x11 (快速鉴权回执), 0x13 (鉴权成功), 0x2009 等
+            // 2. 检查标准 GCSP / GMA 命令帧 (前导 0x01，权威长度前缀位于 [1..2])
             if (buffer.size >= 4 && buffer[0] == 0x01.toByte()) {
-                val isBinary = (buffer[3].toInt() and 0x0C) == 0
-                if (isBinary) {
-                    val pduLen = ((buffer[1].toInt() and 0x0F) shl 8) or (buffer[2].toInt() and 0xFF)
-                    val totalFrameLen = 3 + pduLen
-                    if (totalFrameLen in 4..4096) {
-                        if (buffer.size < totalFrameLen) {
-                            break // 数据尚未收全，等待后续分包到达
-                        }
-                        val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
-                        buffer.subList(0, totalFrameLen).clear()
-                        onGmaCommand(0x0001, frameBytes)
-                        continue
+                val pduLen = ((buffer[1].toInt() and 0x0F) shl 8) or (buffer[2].toInt() and 0xFF)
+                val totalFrameLen = 3 + pduLen
+                if (totalFrameLen in 4..4096) {
+                    if (buffer.size < totalFrameLen) {
+                        break // 数据尚未收全，保留缓冲区等待后续分包
                     }
+                    val frameBytes = ByteArray(totalFrameLen) { buffer[it] }
+                    buffer.subList(0, totalFrameLen).clear()
+
+                    val flag = frameBytes[3].toInt() and 0xFF
+                    val isBinary = (flag and 0x0C) == 0
+
+                    if (isBinary) {
+                        onGmaCommand(0x0001, frameBytes)
+                    } else {
+                        // GCSP 控制与业务帧
+                        if (frameBytes.size >= 8) {
+                            val segment = frameBytes[4].toInt() and 0xFF
+                            val msgId = frameBytes[5].toInt() and 0xFF
+                            val ns = frameBytes[6].toInt() and 0xFF
+                            val cmd = frameBytes[7].toInt() and 0xFF
+
+                            // (A) 官方规范与抓包 Packet 19388/19393：flag 包含 0x20 时必须立即下发 8 字节 ACK
+                            if ((flag and 0x20) != 0 || flag == 0x24) {
+                                val ack = byteArrayOf(
+                                    0x01, 0x00, 0x05, 0x10, 0x00,
+                                    msgId.toByte(), ns.toByte(), cmd.toByte()
+                                )
+                                onGcspControl(ack)
+                            }
+
+                            val payloadBytes = frameBytes.copyOfRange(8, frameBytes.size)
+                            val jsonStr = String(payloadBytes, Charsets.UTF_8).trim()
+
+                            // (B) 官方抓包 Packet 47855/47857 证实：对 ns=0x10/0x16 以及 .ogg 请求立即回 Flag 0x14 会话响应
+                            if (ns == 0x10 || ns == 0x16 || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus")) {
+                                val sid = (System.currentTimeMillis() / 1000).toInt()
+                                val resp = QwenFramer.wrapResponse(
+                                    """{"sessionId":$sid}""",
+                                    msgId = msgId,
+                                    nameSpace = ns,
+                                    cmdId = cmd,
+                                    flag = 0x14
+                                )
+                                LogCollector.r("←响应眼镜会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(ns, msgId, sid))
+                                onGcspControl(resp)
+                            }
+
+                            if (jsonStr.startsWith("{") && jsonStr.endsWith("}")) {
+                                onJson(jsonStr)
+                            }
+                        }
+                    }
+                    continue
                 }
             }
 
-            // 3. 检查 JSON 数据帧（无论底层是否剥离 SDU 长度，亦或跨包分片）：
+            // 3. 容错回退：裸 JSON 文本（非标准或底层驱动剥离了头部）
             val jsonStart = buffer.indexOf('{'.code.toByte())
-            if (jsonStart >= 0) {
+            if (jsonStart in 0..16) {
                 val jsonEnd = findJsonEnd(jsonStart)
                 if (jsonEnd > jsonStart) {
-                    // 完整的 JSON 帧已收齐
                     val jsonBytes = ByteArray(jsonEnd - jsonStart) { buffer[jsonStart + it] }
                     val jsonStr = String(jsonBytes, Charsets.UTF_8).trim()
-
-                    // 依据官方抓包严格数学规律，在 '{' 前的 5 字节固定为：
-                    // [jsonStart - 5]: flag
-                    // [jsonStart - 4]: segment
-                    // [jsonStart - 3]: msgId
-                    // [jsonStart - 2]: nameSpace
-                    // [jsonStart - 1]: cmdId
-                    if (jsonStart >= 5) {
-                        val flag = buffer[jsonStart - 5].toInt() and 0xFF
-                        val msgId = buffer[jsonStart - 3].toInt() and 0xFF
-                        val ns = buffer[jsonStart - 2].toInt() and 0xFF
-                        val cmd = buffer[jsonStart - 1].toInt() and 0xFF
-
-                        // (A) 官方抓包 Packet 19388/19393 确认的 8 字节 ACK：
-                        if (flag == 0x24) {
-                            val ack = byteArrayOf(
-                                0x01, 0x00, 0x05, 0x10, 0x00,
-                                msgId.toByte(), ns.toByte(), cmd.toByte()
-                            )
-                            onGcspControl(ack)
-                        }
-
-                        // (B) 官方抓包 Packet 47855/47857/47859/47861 确认的 sessionId 响应帧：
-                        if (ns == 0x10 || ns == 0x16 || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus")) {
-                            val sid = (System.currentTimeMillis() / 1000).toInt()
-                            val resp = QwenFramer.wrapResponse(
-                                """{"sessionId":$sid}""",
-                                msgId = msgId,
-                                nameSpace = ns,
-                                cmdId = cmd,
-                                flag = 0x14
-                            )
-                            LogCollector.r("←响应眼镜会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(ns, msgId, sid))
-                            onGcspControl(resp)
-                        }
-                    }
-
                     buffer.subList(0, jsonEnd).clear()
                     onJson(jsonStr)
                     continue
-                } else {
-                    // JSON 未完整闭合，等待下一包到达（保留缓冲区数据）
-                    break
                 }
             }
 

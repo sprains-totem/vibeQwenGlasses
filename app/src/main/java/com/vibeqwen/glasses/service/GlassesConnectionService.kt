@@ -397,17 +397,20 @@ class GlassesConnectionService : Service() {
             p.start(recordStartMs)
         }
 
-        // 下发官方实测录音指令序列（官方抓包 Packet 47831~47833 严格确认）
+        // 下发官方实测录音指令序列（官方抓包 Packet 19364~19368 / 47831~47833 严格对齐）
         val ts = System.currentTimeMillis()
-        val sessionIdStr = (ts / 1000).toString()
+        val sessionIdInt = ((ts / 1000) % 10000000).toInt()
         val hex32 = com.vibeqwen.glasses.protocol.QwenCommands.randomHex32()
         val taskLinkId = "AudioRecording$ts$hex32"
+        val traceId = "213fe5af${ts}0005054d0fc5"
+        val dialogId = "44354137344330345f313538343930313134353939363435383135335f7ffffe5f900d068b"
 
-        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId","bizType":"live"},"sessionId":"$sessionIdStr"}"""
-        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":"$sessionIdStr","taskLinkId":"$taskLinkId","wakeupType":"longRecord"}"""
-        val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":"$sessionIdStr","uri":"airecord://start"}"""
+        val j1 = """{"code":"AudioRecording","extensions":{"taskLinkId":"$taskLinkId"},"sessionId":$sessionIdInt,"traceId":"$traceId"}"""
+        val j2 = """{"scene":"AudioRecording","sessionId":$sessionIdInt,"taskLinkId":"$taskLinkId","traceId":"$traceId","wakeupType":"longRecord"}"""
+        val j3 = """{"data":{"dialogId":"$dialogId"},"pageType":"SCHEME_AIRECORD_START","sessionId":$sessionIdInt,"traceId":"$traceId","uri":"airecord://start"}"""
+        val j5 = """{"type":4,"arg1":$sessionIdInt,"arg2":0}"""
 
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             if (transport?.isAudioConnected != true) {
                 com.vibeqwen.glasses.util.LogCollector.c("录音启动前确保音频通道建立...")
                 val ok = transport?.openAudioChannel(transportListener) ?: false
@@ -416,24 +419,34 @@ class GlassesConnectionService : Service() {
                 } else {
                     com.vibeqwen.glasses.util.LogCollector.e("RFCOMM 16 音频通道建立失败")
                 }
-                delay(200)
+                delay(150)
             }
 
-            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording (ns=0x0F, cmd=0x01, flag=0x04)")
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording (ns=0x0F, cmd=0x01, flag=0x24)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                j1.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0F, cmdId = 0x01
+                j1.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0F, cmdId = 0x01
             ))
-            delay(50)
+            delay(40)
 
             com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 2: scene=AudioRecording (ns=0x0D, cmd=0x03, flag=0x24)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j2.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0D, cmdId = 0x03
             ))
-            delay(50)
+            delay(40)
 
             com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 3: SCHEME_AIRECORD_START (ns=0x0D, cmd=0x01, flag=0x24)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j3.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0D, cmdId = 0x01
+            ))
+            delay(30)
+
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 4: hardwareRecordTrigger (0x2D, 0x1A)")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.hardwareRecordTrigger(0x0340))
+            delay(30)
+
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 5: type=4 sessionId (ns=0x0E, cmd=0x01, flag=0x24)")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                j5.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
         }
 
