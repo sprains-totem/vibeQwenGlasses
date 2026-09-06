@@ -92,6 +92,7 @@ class GlassesConnectionService : Service() {
     private var recording = false
     private var recordStartMs = 0L
     private var userStoppedCooldownUntil = 0L
+    private var glassesGestureTriggered = false
 
     fun transport(): ClassicBtTransport? = transport
 
@@ -308,14 +309,23 @@ class GlassesConnectionService : Service() {
 
         if (text.contains("INPUT_EVENT") || text.contains("input") || text.contains("touch")) {
             com.vibeqwen.glasses.util.LogCollector.c("★ 捕获眼镜侧输入事件: ${text.take(160)}")
+            // 严密判定：只有用户物理执行双指长按手势 (type: 78) 时，才标记为眼镜侧主动触发意图
+            if (text.contains("INPUT_EVENT_MEDIA_MULTI_FINGER_LONG") || (text.contains("\"type\":78") && text.contains("input"))) {
+                com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧双指长按录音手势 (type: 78)，已置位硬件录音触发标记")
+                glassesGestureTriggered = true
+            }
         }
 
         when (val ev = QwenEvents.parse(text).kind) {
             EventKind.RECORD_START -> {
                 Log.i(TAG, "眼镜事件: record_start")
-                if (!recording && System.currentTimeMillis() > userStoppedCooldownUntil && isReady()) {
-                    com.vibeqwen.glasses.util.LogCollector.r("★ 收到眼镜侧 record_start，联动启动本地录音采集")
+                // 仅当用户物理在眼镜上执行了手势触发，且不在冷却期内时，才联动自启动
+                if (!recording && glassesGestureTriggered && System.currentTimeMillis() > userStoppedCooldownUntil && isReady()) {
+                    glassesGestureTriggered = false
+                    com.vibeqwen.glasses.util.LogCollector.r("★ 收到眼镜侧双指长按录音事件，联动启动本地录音采集")
                     startRecording(auto = true)
+                } else {
+                    glassesGestureTriggered = false
                 }
             }
             EventKind.RECORD_END -> {
@@ -327,13 +337,11 @@ class GlassesConnectionService : Service() {
             EventKind.RECORD_STATUS -> {
                 val status = QwenEvents.parse(text)
                 Log.i(TAG, "眼镜事件: AudioRecording status=${status.recordStatus} stop=${status.reasonStop}")
-                // 眼镜侧结束录音（reasonStop=KEY/CLOUD）：本地自动封口保存
+                // 眼镜侧结束录音（reasonStop=KEY/CLOUD/APP）：本地自动封口保存
                 if (status.recordStatus == "Exited" && recording) {
                     finalizeRecording("眼镜侧结束录音")
-                } else if (status.recordStatus == "Running" && !recording && System.currentTimeMillis() > userStoppedCooldownUntil && isReady()) {
-                    com.vibeqwen.glasses.util.LogCollector.r("★ 收到眼镜侧 status=Running，联动启动本地录音采集")
-                    startRecording(auto = true)
                 }
+                // 注意：绝不可在 status=Running 时反向自启动录音，Running 是眼镜内部状态确认，而非用户触发指令！
             }
             EventKind.RECORD_TELEMETRY -> Unit
             EventKind.HEARTBEAT -> publishHeartbeat()
@@ -459,7 +467,8 @@ class GlassesConnectionService : Service() {
 
     private fun stopRecording() {
         if (!recording) return
-        userStoppedCooldownUntil = System.currentTimeMillis() + 4000L // 4秒内禁止任何自动录音重入
+        glassesGestureTriggered = false
+        userStoppedCooldownUntil = System.currentTimeMillis() + 8000L // 8秒内严格禁止任何自启动重入
         finalizeRecording("用户停止")
         // 官方抓包 Packet 48698/48699 严格确认的停止录音指令序列
         val j1 = """{"type":"PART","codeList":["AudioRecording"]}"""
