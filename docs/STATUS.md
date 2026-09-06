@@ -174,16 +174,15 @@
 
 ---
 
-## 七、设备信息
+## 七、设备规范信息
 
 | 项目 | 值 |
 |------|-----|
-| 手机 | vivo V2425A, Android 16 (API 36) |
-| 眼镜主 MAC | C4:D7:DC:40:19:1C (HFP/A2DP) |
-| 眼镜芯片 | BES2800 + Snapdragon AR1 |
-| 眼镜固件 | 1.10.0-RS-20260826.0248 |
+| 手机平台 | Android 10+ (已测试 Android 14/16) |
+| 眼镜主蓝牙 | 恒玄 BES2800 (HFP/A2DP/RFCOMM) |
+| 眼镜主芯片 | Snapdragon AR1 |
+| 眼镜固件基准 | 1.10.0-RS 通用固件 |
 | 眼镜设备型号 | AILABS_SG02_QW |
-| 眼镜 SN | 5200002612240211A002181 |
 | L2CAP PSM | 130 |
 | RFCOMM Audio Channel | 16 |
 | BLE Service UUID | 0xFEB3 |

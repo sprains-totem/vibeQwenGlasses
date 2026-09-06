@@ -123,7 +123,7 @@ object QwenFramer {
     /**
      * 会话 CBOR 系统信息帧（144 字节，自动前置 SDU 长度 0x0090）
      */
-    fun cborSystemInfoFrame(peerMac: String = "de:1b:47:f9:a2:64", seq: Int = 4): ByteArray {
+    fun cborSystemInfoFrame(peerMac: String = "02:00:00:00:00:00", seq: Int = 4): ByteArray {
         val baos = ByteArrayOutputStream()
         baos.write(byteArrayOf(
             0x01, 0x00, 0x8d.toByte(), 0x08, 0x00,
@@ -169,7 +169,7 @@ object QwenFramer {
         baos.write(0x00)
         baos.write("eappId".toByteArray(Charsets.ISO_8859_1))
         baos.write("ocom.alibaba.wowbosgAndroidhpeerAddrq".toByteArray(Charsets.ISO_8859_1))
-        baos.write("22:c1:37:10:6e:b4".toByteArray(Charsets.ISO_8859_1))
+        baos.write("02:00:00:00:00:00".toByteArray(Charsets.ISO_8859_1))
         baos.write("dtime".toByteArray(Charsets.ISO_8859_1))
         baos.write(byteArrayOf(0x1B, 0x00, 0x00, 0x01, 0xA0.toByte(), 0x52, 0xA4.toByte(), 0x81.toByte(), 0x80.toByte()))
         baos.write("jtimeOffset".toByteArray(Charsets.ISO_8859_1))

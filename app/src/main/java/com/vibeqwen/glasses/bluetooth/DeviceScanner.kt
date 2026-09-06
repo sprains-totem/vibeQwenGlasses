@@ -6,9 +6,7 @@ import android.content.Context
 import com.vibeqwen.glasses.protocol.QwenConstants
 
 /**
- * 设备扫描/过滤：列出已配对设备，按名称 / MAC 过滤眼镜。
- *
- * 眼镜 MAC：A0:FB:C5:21:9B:20（抓包确认，注意 B4:6E:10:37:C1:22 是手机自身地址）。
+ * 设备扫描/过滤：列出已配对设备，按名称 / 特征过滤眼镜。
  * 本版仅使用已配对列表（无需 BLUETOOTH_SCAN 主动发现），保证权限负担最小。
  */
 object DeviceScanner {
@@ -18,9 +16,6 @@ object DeviceScanner {
         val mac: String,
         val bonded: Boolean,
     )
-
-    /** 已确认的眼镜 MAC 列表 */
-    private val knownMacs = listOf(QwenConstants.GLASSES_MAC).distinct()
 
     /** 眼镜名称特征（固件常带 ODM/型号字样） */
     private val nameHints = listOf("AILABS", "SG02", "Quark", "Qwen", "千问", "Glass", "BES", "bes2800")
@@ -43,9 +38,8 @@ object DeviceScanner {
         }
     }
 
-    /** 名称/MAC 特征匹配判断是否为眼镜 */
+    /** 名称特征匹配判断是否为眼镜 */
     fun isLikelyGlasses(name: String?, mac: String): Boolean {
-        if (knownMacs.any { it.equals(mac, ignoreCase = true) }) return true
         if (name.isNullOrBlank()) return false
         return nameHints.any { name.contains(it, ignoreCase = true) }
     }

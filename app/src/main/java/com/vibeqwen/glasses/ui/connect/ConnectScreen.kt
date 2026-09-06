@@ -152,7 +152,7 @@ fun ConnectScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "没有找到已配对设备\n请在系统蓝牙设置中先与眼镜配对（${com.vibeqwen.glasses.protocol.QwenConstants.GLASSES_MAC}）",
+                            "没有找到已配对设备\n请先在手机系统蓝牙设置中完成眼镜配对",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
                         )

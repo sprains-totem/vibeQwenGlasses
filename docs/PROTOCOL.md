@@ -1,6 +1,6 @@
 # 千问 G1 眼镜私有蓝牙协议规格书（全链路逆向实测权威版）
 
-> 来源：基于官方 App (`com.alibaba.wow`) 的 BTSnoop HCI 空口抓包、APK 逆向工程、以及 vibeQwenGlasses 在真机（OnePlus 6 Android 14 + 千问 G1 眼镜 191C 固件 `1.10.0-RS-20260826.0248`）上的端到端联调实测与反编译比对。  
+> 来源：基于官方 App (`com.alibaba.wow`) 的 BTSnoop HCI 空口抓包、APK 逆向工程、以及 vibeQwenGlasses 在 Android 真机与千问 G1 眼镜上的端到端联调实测与反编译比对。  
 > 状态：**已完全破解并全链路实测验证**。支持在脱离官方 App 的情况下，全自主完成双通道建立、GMA 鉴权握手、会话保活、双向控制指令下发、16kHz 无损 PCM 实时推流捕获与落盘。
 
 ---

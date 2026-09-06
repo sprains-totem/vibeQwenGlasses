@@ -46,8 +46,15 @@ class DebugProvider : ContentProvider() {
             "help" -> helpText()
             "status" -> getStatus(service)
             "connect" -> {
-                val mac = if (!arg.isNullOrBlank()) arg else QwenConstants.GLASSES_MAC
                 val ctx = context ?: return "Error: context is null"
+                val mac = if (!arg.isNullOrBlank()) {
+                    arg
+                } else {
+                    com.vibeqwen.glasses.bluetooth.DeviceScanner.findGlasses(ctx)?.mac ?: ""
+                }
+                if (mac.isBlank()) {
+                    return "错误: 请指定 MAC 地址 (例如: qwen connect AA:BB:CC:DD:EE:FF)，或先在蓝牙设置中配对眼镜"
+                }
                 GlassesConnectionService.connect(ctx, mac)
                 "已向 Service 发送连接指令 -> $mac"
             }
@@ -141,7 +148,7 @@ class DebugProvider : ContentProvider() {
 支持命令:
   help                     显示本帮助信息
   status                   查看当前 App / 服务 / 蓝牙通道 / 录音完整状态 (JSON)
-  connect [mac]            发起连接指定眼镜 (默认 C4:D7:DC:40:19:1C)
+  connect [mac]            发起连接指定眼镜 (可选指定 MAC 地址)
   disconnect               断开所有连接
   attach                   向眼镜发送 attach_success 激活挂载
   rfcomm_connect [channel] 直连经典蓝牙音频通道 (默认 Channel 16)

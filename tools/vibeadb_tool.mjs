@@ -1,7 +1,11 @@
-﻿import { spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-const PAIRING = process.env.VIBEADB_PAIRING || 'vibeadb://adb.b-1.workers.dev/cc83ec3faab3b2aeff8979ab363f88f8#pz97usUu9LMHxA-KKFUnfamZ4_DktJZ8';
+const PAIRING = process.env.VIBEADB_PAIRING || '';
+if (!PAIRING) {
+  console.error('Error: VIBEADB_PAIRING environment variable not set.');
+  process.exit(1);
+}
 const TOOL = process.argv[2] || 'device_status';
 let ARGS = {};
 try {

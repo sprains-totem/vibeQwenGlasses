@@ -2,7 +2,11 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 
-const PAIRING = process.env.VIBEADB_PAIRING || 'vibeadb://adb.b-1.workers.dev/cc83ec3faab3b2aeff8979ab363f88f8#pz97usUu9LMHxA-KKFUnfamZ4_DktJZ8';
+const PAIRING = process.env.VIBEADB_PAIRING || '';
+if (!PAIRING) {
+  console.error('Error: VIBEADB_PAIRING environment variable not set.');
+  process.exit(1);
+}
 const mcpDir = path.resolve('D:/Projects/copilot/vibeADB/mcp');
 
 const type = process.argv[2] || 'status';
@@ -21,10 +25,10 @@ switch (type) {
     broadcastCmd = `am broadcast -a com.vibeqwen.glasses.DEBUG_AUTH --ei productId ${arg1 || 8518} --es randomA "${arg2 || 'auto'}"`;
     break;
   case 'listen':
-    broadcastCmd = `am broadcast -a com.vibeqwen.glasses.DEBUG_LISTEN_RFCOMM --es uuid "${arg1 || 'D5A74C04-894A-4E70-C2AE-0BDC687904FE'}"`;
+    broadcastCmd = `am broadcast -a com.vibeqwen.glasses.DEBUG_LISTEN_RFCOMM --es uuid "${arg1 || '00001101-0000-1000-8000-00805F9B34FB'}"`;
     break;
   case 'connect':
-    broadcastCmd = `am broadcast -a com.vibeqwen.glasses.DEBUG_CONNECT --es mac "${arg1 || 'C4:D7:DC:40:19:1C'}" --ei psm ${arg2 || 130}`;
+    broadcastCmd = `am broadcast -a com.vibeqwen.glasses.DEBUG_CONNECT --es mac "${arg1 || 'AA:BB:CC:DD:EE:FF'}" --ei psm ${arg2 || 130}`;
     break;
   case 'status':
   default:

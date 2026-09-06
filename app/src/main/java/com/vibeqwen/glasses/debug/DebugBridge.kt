@@ -38,7 +38,7 @@ import javax.crypto.spec.SecretKeySpec
  * 4. 开启二级 RFCOMM 服务端监听 (等待眼镜主动连入):
  *    am broadcast -a com.vibeqwen.glasses.DEBUG_LISTEN_RFCOMM --es uuid "D5A74C04-894A-4E70-C2AE-0BDC687904FE"
  * 5. 动态连接指定 PSM (L2CAP) 或 UUID (RFCOMM):
- *    am broadcast -a com.vibeqwen.glasses.DEBUG_CONNECT --es mac "C4:D7:DC:40:19:1C" --ei psm 130
+ *    am broadcast -a com.vibeqwen.glasses.DEBUG_CONNECT --es mac "AA:BB:CC:DD:EE:FF" --ei psm 130
  */
 class DebugBridge(
     private val context: Context,
@@ -209,7 +209,9 @@ class DebugBridge(
 
     @SuppressLint("MissingPermission")
     private fun handleConnect(intent: Intent) {
-        val mac = intent.getStringExtra("mac") ?: QwenConstants.GLASSES_MAC
+        val mac = intent.getStringExtra("mac")
+            ?: com.vibeqwen.glasses.bluetooth.DeviceScanner.findGlasses(context)?.mac
+            ?: return
         val psm = intent.getIntExtra("psm", -1)
         val uuidStr = intent.getStringExtra("uuid")
 

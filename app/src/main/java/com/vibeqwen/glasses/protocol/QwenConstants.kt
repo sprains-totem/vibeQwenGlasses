@@ -103,23 +103,21 @@ object QwenConstants {
     /** 音频通道 UUID 尝试顺序（官方 RFCOMM 优先） */
     val DEFAULT_AUDIO_UUIDS = listOf(UUID_GMA_RFCOMM, UUID_OFFICIAL_BIND, UUID_BES_DATA_03FD, UUID_HFAG_111E, UUID_HSP_1108, UUID_SPP_1101)
 
-    // ── 设备身份常量（真机抓包与 shared_prefs 提取） ──
+    // ── 设备身份常量（通用规范） ──
     const val DEVICE_ODM = "AILABS_SG02_QW"
     const val DEVICE_MODEL = "AILABS_SG02_QW"
     const val DEVICE_BRAND = "Quark_glasses"
     const val DEVICE_TYPE = "bes2800"
     /** Product ID (8665 = 0x21D9) */
     const val PRODUCT_ID = 8665
-    /** GMA 设备 UUID (D5A74C04894A4E70C2AE0BDC687904FE) */
+    /** GMA 设备 UUID 标识 */
     const val DEVICE_UUID = "D5A74C04894A4E70C2AE0BDC687904FE"
-    /** GMA 鉴权 BLE 密钥（来自 /data/data/com.alibaba.wow/shared_prefs/wow_data.xml 真实提取） */
-    const val DEVICE_BLE_KEY = "95ad82fb2a0d8fd8f6be52b0811f7468"
-    /** 设备 SN */
-    const val DEVICE_SN = "5200002612240211A002181"
-    /** 眼镜蓝牙 MAC（实测：Qwen Glasses G1 191C） */
-    const val GLASSES_MAC = "C4:D7:DC:40:19:1C"
-    /** 眼镜设备名（实测） */
-    const val GLASSES_NAME = "Qwen Glasses G1 191C"
+    /** GMA 鉴权示例密钥 */
+    const val DEVICE_BLE_KEY = "00112233445566778899aabbccddeeff"
+    /** 示例设备 SN */
+    const val DEVICE_SN = "5200000000000000A000000"
+    /** 示例眼镜默认名称 */
+    const val GLASSES_NAME = "Qwen Glasses G1"
 
     // ── BLE 广播特征（官方 APP 逆向确认，2026-08-30 vibeADB 真机验证）──
     /** 官方 APP 扫描眼镜的 Service UUID: 0xFEB3（Alibaba 私有） */
