@@ -405,17 +405,17 @@ class GlassesConnectionService : Service() {
             p.start(recordStartMs)
         }
 
-        // 下发官方实测录音激活序列（Packet 19364~19368，真机 100% 验证可稳定采集音频）
+        // 下发官方触控长录音激活序列（Packet 16214~16217，真机验证直接触发眼镜原生「噔噔」录音提示音）
         val ts = System.currentTimeMillis()
         val sessionIdInt = ((ts / 1000) % 10000000).toInt()
         val hex32 = com.vibeqwen.glasses.protocol.QwenCommands.randomHex32()
         val taskLinkId = "AudioRecording$ts$hex32"
         val traceId = "213fe5af${ts}0005054d0fc5"
-        val dialogId = "44354137344330345f313538343930313134353939363435383135335f7ffffe5f900d068b"
 
-        val j1 = """{"code":"AudioRecording","extensions":{"taskLinkId":"$taskLinkId"},"sessionId":$sessionIdInt,"traceId":"$traceId"}"""
-        val j2 = """{"scene":"AudioRecording","sessionId":$sessionIdInt,"taskLinkId":"$taskLinkId","traceId":"$traceId","wakeupType":"longRecord"}"""
-        val j3 = """{"data":{"dialogId":"$dialogId"},"pageType":"SCHEME_AIRECORD_START","sessionId":$sessionIdInt,"traceId":"$traceId","uri":"airecord://start"}"""
+        // 彻底移除会引发 AI 对话第二轮监听提示音的 dialogId，纯净使用 reason: "touch"
+        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId","bizType":"live"},"sessionId":$sessionIdInt,"traceId":"$traceId"}"""
+        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":$sessionIdInt,"taskLinkId":"$taskLinkId","traceId":"$traceId","wakeupType":"longRecord"}"""
+        val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":$sessionIdInt,"traceId":"$traceId","uri":"airecord://start"}"""
         val j5 = """{"type":4,"arg1":$sessionIdInt,"arg2":0}"""
 
         scope.launch(Dispatchers.IO) {
