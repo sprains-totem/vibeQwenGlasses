@@ -366,6 +366,13 @@ class GlassesConnectionService : Service() {
             }
             EventKind.INPUT_EVENT -> {
                 when (ev.inputType) {
+                    73 -> { // INPUT_EVENT_MEDIA_CLICK_DOUBLE: 双击镜腿结束录音 (官方真机抓包 Packet #6100 对齐)
+                        com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧双击手势 (type: 73)")
+                        if (recording) {
+                            com.vibeqwen.glasses.util.LogCollector.r("★ 录音中双击镜腿，停止录音并保存")
+                            stopRecording()
+                        }
+                    }
                     78 -> { // INPUT_EVENT_MEDIA_MULTI_FINGER_LONG: 多指长按
                         com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧多指长按手势 (type: 78)")
                         if (recording) {
@@ -417,24 +424,43 @@ class GlassesConnectionService : Service() {
         }
     }
 
+    private fun numToChinese(n: Int): String {
+        val digits = arrayOf("零", "一", "二", "三", "四", "五", "六", "七", "八", "九")
+        return when {
+            n < 0 -> n.toString()
+            n < 10 -> digits[n]
+            n == 10 -> "十"
+            n < 20 -> "十" + digits[n % 10]
+            n % 10 == 0 -> digits[n / 10] + "十"
+            else -> digits[n / 10] + "十" + digits[n % 10]
+        }
+    }
+
     /**
-     * 电源键触发：官方抓包 Packet 35833~35836 严格 1:1 对齐序列
-     * 下发 type 4, type 1011 (arg1=8) 与 type 10111 (声明 expectSpeech=false, needFeedback=false)
-     * 同时手机端朗读 TTS，彻底告别“手机网络好像有点问题”！
+     * 电源键触发：官方抓包 Packet #2852~#2861 严格 1:1 对齐序列
+     * 1. 发送 type 4 会话绑定 (Flag 0x24, NS 0x0E, Cmd 0x01)
+     * 2. 发送 type 1011 注入中文文本 (Flag 0x24, NS 0x0D, Cmd 0x0B)
+     * 3. 发送 type 1011 注入中文文本 (Flag 0x24, NS 0x0E, Cmd 0x01)
+     * 4. 发送 type 10111 显式声明 expectSpeech=false, needFeedback=false (Flag 0x24, NS 0x0E, Cmd 0x01)
+     * 5. 发送 type 1104 媒体流就绪 (Flag 0x24, NS 0x0E, Cmd 0x01)
+     * 眼镜内置 BES2800 语音合成引擎直接在镜腿朗读，绝无网络错误提示！
      */
     private fun announceBatteryAndTime(bat: Int) {
         val cal = java.util.Calendar.getInstance()
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val minute = cal.get(java.util.Calendar.MINUTE)
-        val period = if (hour < 12) "上午" else if (hour < 18) "下午" else "晚上"
         val displayHour = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
-        val minuteStr = if (minute == 0) "整" else "%d分".format(minute)
-        val text = "现在是$period${displayHour}点$minuteStr，眼镜电量剩余百分之$bat"
+
+        val hStr = numToChinese(displayHour)
+        val mStr = if (minute == 0) "整" else numToChinese(minute) + "分"
+        val bStr = numToChinese(bat)
+        val text = "现在时间是${hStr}点${mStr},当前电量是百分之${bStr}"
         com.vibeqwen.glasses.util.LogCollector.r("★ 触发官方对齐播报: $text")
 
         val sid = ((System.currentTimeMillis() / 1000) % 10000000).toInt()
         val cmd1011 = """{"type":1011,"arg1":8,"arg2":0,"data":"$text"}"""
         val cmd10111 = """{"type":10111,"arg1":$sid,"arg2":0,"data":"{\"expectSpeech\":false,\"needLight\":false,\"text\":\"$text\",\"type\":\"stream\",\"needFeedback\":false}"}"""
+        val cmd1104 = """{"type":1104,"arg1":701,"arg2":0}"""
 
         scope.launch(Dispatchers.IO) {
             // 指令 1: type 4 会话绑定 (Flag 0x24, NS 0x0E, Cmd 0x01)
@@ -443,10 +469,10 @@ class GlassesConnectionService : Service() {
                 flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
             delay(30)
-            // 指令 2: type 1011 (发往 ns=0x0D cmd=0x0C)
+            // 指令 2: type 1011 (发往 ns=0x0D cmd=0x0B)
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 cmd1011.toByteArray(Charsets.UTF_8),
-                flag = 0x24, nameSpace = 0x0D, cmdId = 0x0C
+                flag = 0x24, nameSpace = 0x0D, cmdId = 0x0B
             ))
             delay(30)
             // 指令 3: type 1011 (发往 ns=0x0E cmd=0x01)
@@ -460,9 +486,15 @@ class GlassesConnectionService : Service() {
                 cmd10111.toByteArray(Charsets.UTF_8),
                 flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
+            delay(30)
+            // 指令 5: type 1104 (发往 ns=0x0E cmd=0x01)
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                cmd1104.toByteArray(Charsets.UTF_8),
+                flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
+            ))
         }
 
-        // 手机端 TTS 朗读
+        // 手机端 TTS 朗读兜底
         scope.launch(Dispatchers.Main) {
             tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "qwen_tts_${System.currentTimeMillis()}")
         }

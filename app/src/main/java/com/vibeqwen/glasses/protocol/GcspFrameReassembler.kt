@@ -105,6 +105,13 @@ class GcspFrameReassembler(
                                 )
                                 LogCollector.r("←响应眼镜会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(ns, msgId, sid))
                                 onGcspControl(resp)
+
+                                if (jsonStr.contains("GetSetting")) {
+                                    val setResp = com.vibeqwen.glasses.protocol.QwenCommands.getSettingResp(sid)
+                                    val setRespBytes = QwenFramer.wrap(setResp.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x10, cmdId = 0x02)
+                                    LogCollector.r("←响应眼镜 GetSettingResp (配置快捷键与手势)")
+                                    onGcspControl(setRespBytes)
+                                }
                             }
 
                             if (jsonStr.startsWith("{") && jsonStr.endsWith("}")) {
@@ -237,6 +244,13 @@ class GcspFrameReassembler(
                         )
                         LogCollector.r("←响应眼镜推流/文本会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(nsByte, frame[5], sid))
                         onGcspControl(resp)
+
+                        if (jsonStr.contains("GetSetting")) {
+                            val setResp = com.vibeqwen.glasses.protocol.QwenCommands.getSettingResp(sid)
+                            val setRespBytes = QwenFramer.wrap(setResp.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x10, cmdId = 0x02)
+                            LogCollector.r("←响应眼镜 GetSettingResp (配置快捷键与手势)")
+                            onGcspControl(setRespBytes)
+                        }
                     }
 
                     onJson(jsonStr)

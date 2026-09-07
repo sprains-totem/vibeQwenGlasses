@@ -230,6 +230,56 @@ object QwenCommands {
     }
 
     /**
+     * GetSettingResp: 响应眼镜的 GetSetting 请求，配置快捷按键与手势
+     * 启用 shortcut_wakeup (使电源键触发 PowerButton 广播电量时间)
+     * 启用 touchQuery (使多指长按触发 打开会议录音)
+     */
+    fun getSettingResp(sessionId: Int = (System.currentTimeMillis() / 1000).toInt()): String {
+        val innerData = buildJsonObject {
+            put("attachmentCount", 0)
+            put("bizGroup", "SG02")
+            put("bizType", "AILABS")
+            put("commandType", "response")
+            put("commands", buildJsonArray {
+                add(buildJsonObject {
+                    put("commandDomain", "AliGenie.System.DeviceMirror")
+                    put("commandName", "GetSettingResp")
+                    put("payload", buildJsonObject {
+                        put("code", 200)
+                        put("msg", "success")
+                        put("setting", buildJsonObject {
+                            put("product", buildJsonArray {
+                                add(buildJsonObject {
+                                    put("identifier", "shortcut_wakeup")
+                                    put("priority", 0)
+                                    put("value", buildJsonObject { put("enable", true) })
+                                })
+                                add(buildJsonObject {
+                                    put("identifier", "touchQuery")
+                                    put("priority", 0)
+                                    put("value", buildJsonObject {
+                                        put("enable", true)
+                                        put("text", "打开会议录音")
+                                    })
+                                })
+                            })
+                        })
+                    })
+                })
+            })
+            put("isLast", true)
+            put("uuid", QwenConstants.DEVICE_UUID)
+            put("version", "3.0")
+        }.toString()
+
+        return buildJsonObject {
+            put("code", 0)
+            put("data", innerData)
+            put("sessionId", sessionId)
+        }.toString()
+    }
+
+    /**
      * 语音播报文本 (TTS): 让眼镜通过本地原生语音合成播报文字 (抓包 Packet #36676 / #36677 对齐)
      */
     fun speakText(text: String): String {
