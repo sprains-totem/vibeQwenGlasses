@@ -288,7 +288,11 @@ class GlassesConnectionService : Service() {
                 updateNotification()
 
                 scope.launch(Dispatchers.IO) {
-                    // 主动查询设备实时电量等信息
+                    // 1. 注入官方全量云端特性认证表（45项App + 45项Device），激活眼镜 cloud_auth_done，杜绝网络异常！
+                    sendCloudFeatureList()
+                    delay(100)
+
+                    // 2. 主动查询设备实时电量等信息
                     transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                         com.vibeqwen.glasses.protocol.QwenCommands.queryDevice().toByteArray(),
                         flag = 0x00, nameSpace = 0x00, cmdId = 0x01
@@ -320,6 +324,12 @@ class GlassesConnectionService : Service() {
         com.vibeqwen.glasses.util.LogCollector.p("收到JSON: ${text.take(120)}")
         // 喂握手状态机（驱动 READY）
         handshake?.onGlassesEvent(text)
+
+        // 自动应答眼镜从云端检索特性的请求 (RetrieveFeatureListFromCloud / TriggerResetFeatureList)
+        if (text.contains("RetrieveFeatureListFromCloud") || text.contains("TriggerResetFeatureList")) {
+            com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜端云端特性同步请求 ($text)，立即下发官方全量特性表...")
+            sendCloudFeatureList()
+        }
 
         // 收到眼镜侧文本意图「打开会议录音」时联动开启录音
         if (text.contains("打开会议录音")) {
@@ -497,6 +507,34 @@ class GlassesConnectionService : Service() {
         // 手机端 TTS 朗读兜底
         scope.launch(Dispatchers.Main) {
             tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "qwen_tts_${System.currentTimeMillis()}")
+        }
+    }
+
+    /**
+     * 向眼镜注入官方全量云端特性表（Packet #870~#916 权威对齐：45个App特性 + 45个Device特性）
+     * 解决眼镜反复派发 RetrieveFeatureListFromCloud 以及 CloudCallback result: -1 导致的"手机网络好像有点问题"！
+     */
+    private fun sendCloudFeatureList() {
+        scope.launch(Dispatchers.IO) {
+            try {
+                val jsonBytes = assets.open("official_features.json").use { it.readBytes() }
+                com.vibeqwen.glasses.util.LogCollector.r("★ 开始向眼镜注入官方云端特性认证表 (${jsonBytes.size}B, 45项App + 45项Device)...")
+                val chunks = com.vibeqwen.glasses.protocol.QwenFramer.wrapChunked(
+                    jsonBytes,
+                    flag = 0x24,
+                    nameSpace = 0x08,
+                    cmdId = 0x13,
+                    msgId = 0x0B,
+                    maxChunkSize = 1240
+                )
+                for (chunk in chunks) {
+                    transport?.write(chunk)
+                    delay(30)
+                }
+                com.vibeqwen.glasses.util.LogCollector.c("★ 官方云端特性认证表 (${chunks.size} 分片) 注入成功！驱动眼镜 cloud_auth_done 激活")
+            } catch (e: Exception) {
+                com.vibeqwen.glasses.util.LogCollector.e("注入云端特性表失败: ${e.message}")
+            }
         }
     }
 

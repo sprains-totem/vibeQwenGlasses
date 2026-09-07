@@ -274,6 +274,53 @@ object QwenFramer {
     }
 
     /**
+     * 将大型负载（如云端特性表 5.4KB）按照 GCSP 标准分段分片 (Chunking) 封装。
+     * 依据官方真机抓包 Packet #870~#916 严格对齐：
+     * 每个分片载荷最大 1240 字节。
+     * 每个分片首部格式：
+     * [0]    Channel = 0x01
+     * [1..2] PDU Len (LE) = len + 5
+     * [3]    Flag = flag (0x24)
+     * [4]    Chunk Index 字节 = ((chunkIndex shl 4) or (totalChunks - 1))
+     * [5]    msgId
+     * [6]    nameSpace
+     * [7]    cmdId
+     * [8..]  当前分片数据
+     */
+    fun wrapChunked(
+        payload: ByteArray,
+        flag: Int = 0x24,
+        nameSpace: Int = 0x08,
+        cmdId: Int = 0x13,
+        msgId: Int = 0x0B,
+        maxChunkSize: Int = 1240
+    ): List<ByteArray> {
+        val totalChunks = (payload.size + maxChunkSize - 1) / maxChunkSize
+        val chunks = mutableListOf<ByteArray>()
+        var offset = 0
+
+        for (i in 0 until totalChunks) {
+            val len = minOf(maxChunkSize, payload.size - offset)
+            val chunkPayload = payload.copyOfRange(offset, offset + len)
+            val pduLen = len + 5
+
+            val header = ByteArray(8).apply {
+                this[0] = 0x01 // Channel 1
+                this[1] = ((pduLen shr 8) and 0x0F).toByte()
+                this[2] = (pduLen and 0xFF).toByte()
+                this[3] = flag.toByte()
+                this[4] = ((i shl 4) or ((totalChunks - 1) and 0x0F)).toByte()
+                this[5] = (msgId and 0xFF).toByte()
+                this[6] = (nameSpace and 0xFF).toByte()
+                this[7] = (cmdId and 0xFF).toByte()
+            }
+            chunks.add(header + chunkPayload)
+            offset += len
+        }
+        return chunks
+    }
+
+    /**
      * 生成硬件录音推流使能帧 (官方抓包 Packet 19367 证实：12 字节应用层有效载荷)
      * 空口加上系统自动插入的 2 字节 SDU 长度后为 14 字节：
      * 0C 00 01 00 09 00 00 [seq: 2B] 2D 1A 00 00 00
