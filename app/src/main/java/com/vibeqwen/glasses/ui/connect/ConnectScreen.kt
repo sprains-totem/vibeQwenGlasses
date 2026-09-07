@@ -212,6 +212,12 @@ private fun ConnectionStatusCard(state: ServiceUiState) {
                     style = MaterialTheme.typography.titleMedium,
                     color = tint,
                 )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "v${com.vibeqwen.glasses.BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
                 if (state.connection == ConnectionState.CONNECTING ||
                     state.connection == ConnectionState.HANDSHAKING
                 ) {
