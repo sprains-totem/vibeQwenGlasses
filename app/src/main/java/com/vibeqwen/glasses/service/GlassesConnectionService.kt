@@ -94,6 +94,7 @@ class GlassesConnectionService : Service() {
     private var userStoppedCooldownUntil = 0L
     private var glassesGestureTriggered = false
     private var currentBattery = 80
+    private var tts: android.speech.tts.TextToSpeech? = null
 
     fun transport(): ClassicBtTransport? = transport
 
@@ -141,10 +142,29 @@ class GlassesConnectionService : Service() {
         com.vibeqwen.glasses.util.LogCollector.init(applicationContext)
         createNotificationChannel()
         acquireWakeLock()
+        initTts()
         debugBridge = com.vibeqwen.glasses.debug.DebugBridge(this, this, scope).also { it.register() }
     }
 
+    private fun initTts() {
+        try {
+            tts = android.speech.tts.TextToSpeech(applicationContext) { status ->
+                if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                    tts?.language = java.util.Locale.CHINESE
+                    Log.i(TAG, "Android TTS 引擎初始化成功")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "TTS init error: ${e.message}")
+        }
+    }
+
     override fun onDestroy() {
+        try {
+            tts?.stop()
+            tts?.shutdown()
+        } catch (_: Exception) {}
+        tts = null
         debugBridge?.unregister()
         debugBridge = null
         instance = null
@@ -396,6 +416,12 @@ class GlassesConnectionService : Service() {
             val text = "现在是$period${displayHour}点$minuteStr，眼镜电量剩余百分之$bat"
             com.vibeqwen.glasses.util.LogCollector.r("★ 电源键触发原生播报: $text")
 
+            // 1. 手机端通过系统语音引擎朗读（经由 A2DP 蓝牙耳机通路传至镜腿外放，或切至手机外放）
+            scope.launch(Dispatchers.Main) {
+                tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "qwen_tts_${System.currentTimeMillis()}")
+            }
+
+            // 2. 同时向控制芯片下发官方元数据对齐信令 (指示灯与状态同步)
             val cmd = com.vibeqwen.glasses.protocol.QwenCommands.speakText(text)
             // 官方双通道分发：先向 ns=0x0D cmd=0x0B 发送，再向 ns=0x0E cmd=0x01 发送
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
