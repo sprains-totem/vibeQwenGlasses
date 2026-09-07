@@ -140,35 +140,31 @@ val isBinary = (flag and 0x0C) == 0
 ```
 手机                                                            眼镜
  │                                                               │
- │ [1] J1: 触控长录音业务请求 (Flag 0x24, NS 0x0F, Cmd 0x01)       │
+ │ [1] J1: 触控长录音业务请求 (Flag 0x00, NS 0x00, Cmd 0x01)       │
  │     {"code":"AudioRecording","data":{"reason":"touch"},       │
  │      "extensions":{"taskLinkId":...,"bizType":"live"},        │
- │      "sessionId":8389708,"traceId":"..."}                     │
+ │      "sessionId":"1788584280","traceId":"..."}                 │
  ├──────────────────────────────────────────────────────────────▶│
  │                                                               │
- │ [2] J2: 场景激活与 longRecord 声明 (Flag 0x24, NS 0x0D, Cmd 0x03) │
+ │ [2] J2: 场景激活与 longRecord 声明 (Flag 0x00, NS 0x00, Cmd 0x01) │
  │     {"data":{"reason":"touch"},"scene":"AudioRecording",      │
- │      "sessionId":8389708,"taskLinkId":...,                    │
+ │      "sessionId":"1788584280","taskLinkId":...,                │
  │      "traceId":...,"wakeupType":"longRecord"}                 │
  ├──────────────────────────────────────────────────────────────▶│
  │                                                               │
- │ [3] J3: 协议跳转声明 (Flag 0x24, NS 0x0D, Cmd 0x01)             │
+ │ [3] J3: 协议跳转声明 (Flag 0x00, NS 0x00, Cmd 0x01)             │
  │     {"data":{"reason":"touch"},                               │
- │      "pageType":"SCHEME_AIRECORD_START","sessionId":8389708,  │
+ │      "pageType":"SCHEME_AIRECORD_START","sessionId":"1788584280",│
  │      "traceId":...,"uri":"airecord://start"}                  │
  ├──────────────────────────────────────────────────────────────▶│
  │                                                               │
- │ [4] 硬件录音推流使能帧 (Binary GMA, 12B Payload)               │
- │     01 00 09 00 00 40 03 2D 1A 00 00 00                       │
- ├──────────────────────────────────────────────────────────────▶│
- │                                                               │
- │ [5] J5: 推流确认握手 (Flag 0x24, NS 0x0E, Cmd 0x01)            │
- │     {"type":4,"arg1":8389708,"arg2":0}                       │
+ │ [4] J4: 推流确认握手 (Flag 0x00, NS 0x00, Cmd 0x01)            │
+ │     {"type":4,"arg1":1788584280,"arg2":0}                     │
  ├──────────────────────────────────────────────────────────────▶│
  │                                                               │
  │ ◀─── 眼镜 GlassPlayer 立即播放本地原生「噔噔」提示音 (index 206) │
  │ ◀─── 眼镜回传 .ogg / sceneContexts (NS 0x16)                  │
- │ ──── 手机立即回复 {"sessionId": 8389708} (Flag 0x14) ────────▶ │
+ │ ──── 手机立即回复 {"sessionId": 1788584280} (Flag 0x14) ───────▶ │
  │ ◀─── 眼镜上报 AudioRecording status="Running" (Flag 0x24)     │
  │ ──── 手机立即回发 8 字节 ACK (01 00 05 10 00...) ────────────▶ │
  │                                                               │
@@ -176,21 +172,20 @@ val isBinary = (flag and 0x0C) == 0
 ```
 
 > **关键规则与避坑指南**：
-> 1. **`dialogId` 陷阱**：在纯随身长录音中，**绝对不可注入 `dialogId`**！`dialogId` 是 AI 助手多轮连续对话的标识。一旦附带 `dialogId`，眼镜的 `AiTalkService` 会判定当前处于语音对话的轮次迭代中，导致眼镜跳过长录音的“噔噔”声，转而播放**“语音第二轮等待输入的提示声”**！
-> 2. **`reason: "touch"` 与 `bizType: "live"`**：此二者是指示底层播放器 `GlassPlayer` 触发硬件提示音 `promptPlay (index: 206)` 的必要标记。
-> 3. **`sessionId` 格式**：在官方规范中必须为**7位整数数值**（如 `8389708`），严禁传为字符串，否则底层引擎判定参数格式错误！
-> 4. **指令 4 硬件使能**：Opcode `0x2D`, SubCmd `0x1A` 是恒玄芯片开启双麦 ADC 物理推流的硬开关，缺少此帧眼镜将报 `GMA_TRANSFER_ERROR` 并自动退出。
+> 1. **信令头与命名空间**：官方 App 在 UI 触控录音时，所有信令全部通过应用直通层下发，统一使用 **`Flag = 0x00, Namespace = 0x00, CmdId = 0x01`**（Packet #16214~#16222 确认）。严禁使用云端语音网关的 `Flag = 0x24, NS = 0x0F/0x0D`，否则眼镜会将指令转交至语音助手，误走 AI 对话管线！
+> 2. **`dialogId` 陷阱**：在纯随身长录音中，**绝对不可注入 `dialogId`**！`dialogId` 是 AI 助手多轮连续对话的标识。一旦附带 `dialogId`，眼镜的 `AiTalkService` 会判定当前处于语音对话的轮次迭代中，导致眼镜跳过长录音的“噔噔”声，转而播放**“语音第二轮等待输入的提示声”**！
+> 3. **`reason: "touch"` 与 `bizType: "live"`**：此二者是指示底层播放器 `GlassPlayer` 触发硬件提示音 `promptPlay (index: 206)` 的必要标记。
 
 ### 4.2 录音停止指令序列 (Stop Recording Sequence)
-当用户点击停止录音时，下发 3 条完整注销指令（Packet #16248~#16255 权威确认）：
+当用户点击停止录音时，下发 3 条完整注销指令（Packet #16248~#16255 权威确认，统一采用 `Flag = 0x00, NS = 0x00, Cmd = 0x01`）：
 ```json
-// 指令 1: 退出 AudioRecording 任务部件 (Flag 0x04, NS 0x0F, Cmd 0x02)
+// 指令 1: 退出 AudioRecording 任务部件 (Flag 0x00, NS 0x00, Cmd 0x01)
 {"type":"PART","codeList":["AudioRecording"]}
 
-// 指令 2: 确认任务注销 (Flag 0x04, NS 0x0F, Cmd 0x0A)
+// 指令 2: 确认任务注销 (Flag 0x00, NS 0x00, Cmd 0x01)
 {"code":"AudioRecording"}
 
-// 指令 3: 显式释放硬件音频推流管线 (Flag 0x04, NS 0x0E, Cmd 0x01)
+// 指令 3: 显式释放硬件音频推流管线 (Flag 0x00, NS 0x00, Cmd 0x01)
 {"type":4,"arg1":0,"arg2":1}
 ```
 
