@@ -348,12 +348,24 @@ class GlassesConnectionService : Service() {
                     com.vibeqwen.glasses.util.LogCollector.c("★ 收到眼镜电量更新: $bat%")
                 }
             }
+            EventKind.POWER_BUTTON -> {
+                val bat = ev.battery ?: currentBattery
+                if (bat > 0) currentBattery = bat
+                com.vibeqwen.glasses.util.LogCollector.r("★ 捕获官方电源键事件 (PowerButton, 电量: $bat%)，触发对齐播报")
+                announceBatteryAndTime(bat)
+            }
+            EventKind.TEXT_RECOGNIZE -> {
+                val intentText = ev.eventName ?: ""
+                com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧意图识别: $intentText")
+                if (intentText.contains("打开会议录音") || intentText.contains("录音")) {
+                    if (!recording && isReady() && System.currentTimeMillis() > userStoppedCooldownUntil) {
+                        com.vibeqwen.glasses.util.LogCollector.r("★ 收到「打开会议录音」指令，启动本地录音采集")
+                        startRecording(auto = true)
+                    }
+                }
+            }
             EventKind.INPUT_EVENT -> {
                 when (ev.inputType) {
-                    106 -> { // INPUT_EVENT_POWER_KEY_CLICK: 电源键单击
-                        com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜电源键单击 (type: 106)，触发时间与电量原生播报")
-                        announceBatteryAndTime()
-                    }
                     78 -> { // INPUT_EVENT_MEDIA_MULTI_FINGER_LONG: 多指长按
                         com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧多指长按手势 (type: 78)")
                         if (recording) {
@@ -366,7 +378,10 @@ class GlassesConnectionService : Service() {
                     }
                     75 -> { // INPUT_EVENT_MEDIA_PRESS_LONG: 单指长按
                         com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧单指长按语音唤醒 (type: 75)，播报电量与时间")
-                        announceBatteryAndTime()
+                        announceBatteryAndTime(currentBattery)
+                    }
+                    106 -> {
+                        com.vibeqwen.glasses.util.LogCollector.p("硬件原始电源按键单击 (type: 106)")
                     }
                 }
             }
@@ -403,50 +418,51 @@ class GlassesConnectionService : Service() {
     }
 
     /**
-     * 电源键触发：系统 TTS 语音播报当前时间与电量 (经 A2DP 蓝牙耳机通路或手机外放播放)
-     * 同时下发官方实测 5 条 MediaFocus / TTS 握手序列，告知眼镜音频焦点就绪，彻底避免眼镜超时报“手机网络问题”！
+     * 电源键触发：官方抓包 Packet 35833~35836 严格 1:1 对齐序列
+     * 下发 type 4, type 1011 (arg1=8) 与 type 10111 (声明 expectSpeech=false, needFeedback=false)
+     * 同时手机端朗读 TTS，彻底告别“手机网络好像有点问题”！
      */
-    private fun announceBatteryAndTime() {
+    private fun announceBatteryAndTime(bat: Int) {
         val cal = java.util.Calendar.getInstance()
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val minute = cal.get(java.util.Calendar.MINUTE)
         val period = if (hour < 12) "上午" else if (hour < 18) "下午" else "晚上"
         val displayHour = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
         val minuteStr = if (minute == 0) "整" else "%d分".format(minute)
-        val bat = currentBattery.takeIf { it > 0 } ?: 70
         val text = "现在是$period${displayHour}点$minuteStr，眼镜电量剩余百分之$bat"
-        com.vibeqwen.glasses.util.LogCollector.r("★ 触发语音播报: $text")
+        com.vibeqwen.glasses.util.LogCollector.r("★ 触发官方对齐播报: $text")
 
         val sid = ((System.currentTimeMillis() / 1000) % 10000000).toInt()
+        val cmd1011 = """{"type":1011,"arg1":8,"arg2":0,"data":"$text"}"""
+        val cmd10111 = """{"type":10111,"arg1":$sid,"arg2":0,"data":"{\"expectSpeech\":false,\"needLight\":false,\"text\":\"$text\",\"type\":\"stream\",\"needFeedback\":false}"}"""
+
         scope.launch(Dispatchers.IO) {
-            // 官方抓包 Packet 36280~36295 严格对齐：按键后立即下发 5 条音频焦点握手帧
+            // 指令 1: type 4 会话绑定 (Flag 0x24, NS 0x0E, Cmd 0x01)
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                """{"type":1104,"arg1":702,"arg2":0}""".toByteArray(Charsets.UTF_8),
+                """{"type":4,"arg1":$sid,"arg2":0}""".toByteArray(Charsets.UTF_8),
                 flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
             delay(30)
+            // 指令 2: type 1011 (发往 ns=0x0D cmd=0x0C)
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                """{"type":22,"arg1":1,"arg2":2,"data":"com.alibaba.ailabs.genie.gms"}""".toByteArray(Charsets.UTF_8),
-                flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
-            ))
-            delay(30)
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                """{"type":10,"arg1":12,"arg2":$sid,"data":"{\"forcePlay\":false,\"needLight\":false,\"sessionId\":$sid,\"ttsId\":$sid}"}""".toByteArray(Charsets.UTF_8),
+                cmd1011.toByteArray(Charsets.UTF_8),
                 flag = 0x24, nameSpace = 0x0D, cmdId = 0x0C
             ))
             delay(30)
+            // 指令 3: type 1011 (发往 ns=0x0E cmd=0x01)
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                """{"type":10,"arg1":12,"arg2":$sid,"data":"{\"forcePlay\":false,\"needLight\":false,\"sessionId\":$sid,\"ttsId\":$sid}"}""".toByteArray(Charsets.UTF_8),
+                cmd1011.toByteArray(Charsets.UTF_8),
                 flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
             delay(30)
+            // 指令 4: type 10111 (显式声明 expectSpeech=false, needFeedback=false，告知眼镜无需等待语音输入)
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                """{"type":17,"arg1":12,"arg2":$sid}""".toByteArray(Charsets.UTF_8),
+                cmd10111.toByteArray(Charsets.UTF_8),
                 flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
         }
 
-        // 手机端系统语音引擎朗读（经由 A2DP 蓝牙耳机通路传至镜腿外放，或切至手机外放）
+        // 手机端 TTS 朗读
         scope.launch(Dispatchers.Main) {
             tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "qwen_tts_${System.currentTimeMillis()}")
         }

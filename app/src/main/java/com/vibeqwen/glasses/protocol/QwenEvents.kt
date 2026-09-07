@@ -44,6 +44,8 @@ enum class EventKind {
     RECORD_TELEMETRY,    // AudioRecording onHandler 遥测（recordDataSent）
     BATTERY_STATUS,      // 电池电量状态上报 (fusion_level/quantity)
     INPUT_EVENT,         // 物理按键与触控事件 (type: 106, 75, 78等)
+    POWER_BUTTON,        // AliGenie.Button PowerButton (官方电源键电量时间广播专属事件)
+    TEXT_RECOGNIZE,      // AliGenie.Text Recognize (官方手势/语音意图，如"打开会议录音")
     HEARTBEAT,           // 心跳/同步状态
     DEVICE_PROPS,        // ro.product.* 属性
     TASK_LAYER,          // taskLayer 当前任务变更（含 code:AudioRecording）
@@ -184,6 +186,26 @@ object QwenEvents {
 
         // ── 心跳 / 同步状态 ──
         val eventNs = obj["eventNs"]?.jsonPrimitive?.contentOrNull
+        val payload = obj["payLoad"]?.jsonObject ?: obj["payload"]?.jsonObject
+
+        // ── 官方电源键电量时间专属事件 (AliGenie.Button PowerButton) ──
+        if (eventNs == "AliGenie.Button" && eventName == "PowerButton") {
+            val pStr = payload?.get("power")?.jsonPrimitive?.contentOrNull
+            val pInt = pStr?.toIntOrNull()
+            return GlassesEvent(
+                EventKind.POWER_BUTTON, raw, eventType = eventNs, eventName = eventName,
+                battery = pInt
+            )
+        }
+
+        // ── 官方手势意图识别事件 (AliGenie.Text Recognize，如 "打开会议录音") ──
+        if (eventNs == "AliGenie.Text" && eventName == "Recognize") {
+            val inputText = payload?.get("inputText")?.jsonPrimitive?.contentOrNull
+            return GlassesEvent(
+                EventKind.TEXT_RECOGNIZE, raw, eventType = eventNs, eventName = inputText
+            )
+        }
+
         if (eventName != null && (eventName.contains("heartbeat", true) ||
                 (eventNs == "AliGenie.System" && eventName == "SynchronizeState") ||
                 eventName.contains("Synchronize", true))
