@@ -81,10 +81,34 @@ class GcspFrameReassembler(
                             val payloadBytes = frameBytes.copyOfRange(8, frameBytes.size)
                             val jsonStr = String(payloadBytes, Charsets.UTF_8).trim()
 
-                            // (B) 官方抓包 Packet 50539/51458 严格对齐：
-                            // ns=0x16 cmd=0x02 (停止确认) 回 Flag 0x14 {"code":0}
-                            // ns=0x10/0x16 cmd=0x01 (.ogg/会话同步) 回 Flag 0x14 {"sessionId":$sid}
-                            if (ns == 0x16 && cmd == 0x02) {
+                            // (B) 官方抓包严格对齐：
+                            // 1. PaySDK / Alipay RPC: 立即回复 reply，若为 BIND 查询则返回 BINDED
+                            // 2. ns=0x16 cmd=0x02 (停止确认) 回 Flag 0x14 {"code":0}
+                            // 3. ns=0x10/0x16 cmd=0x01 (.ogg/会话同步) 回 Flag 0x14 {"sessionId":$sid}
+                            if (jsonStr.contains("PaySDK") || jsonStr.contains("\"action\":")) {
+                                val replyResp = QwenFramer.wrapResponse(
+                                    "reply",
+                                    msgId = msgId,
+                                    nameSpace = if (ns != 0) ns else 0x13,
+                                    cmdId = if (cmd != 0) cmd else 0x02,
+                                    flag = 0x14
+                                )
+                                LogCollector.r("←回复 PaySDK RPC ACK (reply, msgId=0x%02X)".format(msgId))
+                                onGcspControl(replyResp)
+
+                                if (jsonStr.contains("COMMAND_PAY_BIND_STATUS_QUERY") || jsonStr.contains("getBindStatus")) {
+                                    val traceId = jsonStr.substringAfter("\"traceId\":\"", "").substringBefore("\"", "")
+                                    val bindPayload = """{"data":"{\"code\":\"1000\",\"data\":\"{\\\"bindStatus\\\":\\\"BINDED\\\",\\\"featureStatusList\\\":[{\\\"featureId\\\":\\\"PAYMENT\\\",\\\"status\\\":\\\"STATUS_BIND\\\"},{\\\"featureId\\\":\\\"CITY_SIGHTSEEING\\\",\\\"status\\\":\\\"STATUS_BIND\\\"},{\\\"featureId\\\":\\\"QUICK_MODE_V2\\\",\\\"status\\\":\\\"STATUS_UNBIND\\\"}],\\\"success\\\":true,\\\"verifyMethodStatus\\\":[{\\\"VERIFY_IRIS\\\":\\\"CLOSE\\\"},{\\\"VERIFY_VOICE\\\":\\\"OPEN\\\"}]}\",\"traceId\":\"$traceId\",\"type\":\"PaySDK\"}"""
+                                    val bindResp = QwenFramer.wrap(
+                                        bindPayload.toByteArray(Charsets.UTF_8),
+                                        flag = 0x04,
+                                        nameSpace = 0x13,
+                                        cmdId = 0x01
+                                    )
+                                    LogCollector.r("←回复 PaySDK 绑定状态成功 (bindStatus: BINDED)")
+                                    onGcspControl(bindResp)
+                                }
+                            } else if (ns == 0x16 && cmd == 0x02) {
                                 val resp = QwenFramer.wrapResponse(
                                     """{"code":0}""",
                                     msgId = msgId,
@@ -223,7 +247,30 @@ class GcspFrameReassembler(
                     // 否则眼镜判定与手机网络失联、停止推流并播报“手机网络好像有点问题，请检查”
                     val nsByte = if (frame.size >= 8) frame[6] else 0.toByte()
                     val cmdByte = if (frame.size >= 8) frame[7] else 0.toByte()
-                    if (jsonStart >= 8 && nsByte == 0x16.toByte() && cmdByte == 0x02.toByte()) {
+                    if (jsonStr.contains("PaySDK") || jsonStr.contains("\"action\":")) {
+                        val replyResp = QwenFramer.wrapResponse(
+                            "reply",
+                            msgId = frame[5].toInt() and 0xFF,
+                            nameSpace = if (nsByte.toInt() != 0) nsByte.toInt() and 0xFF else 0x13,
+                            cmdId = if (cmdByte.toInt() != 0) cmdByte.toInt() and 0xFF else 0x02,
+                            flag = 0x14
+                        )
+                        LogCollector.r("←回复 PaySDK RPC ACK (reply, msgId=0x%02X)".format(frame[5]))
+                        onGcspControl(replyResp)
+
+                        if (jsonStr.contains("COMMAND_PAY_BIND_STATUS_QUERY") || jsonStr.contains("getBindStatus")) {
+                            val traceId = jsonStr.substringAfter("\"traceId\":\"", "").substringBefore("\"", "")
+                            val bindPayload = """{"data":"{\"code\":\"1000\",\"data\":\"{\\\"bindStatus\\\":\\\"BINDED\\\",\\\"featureStatusList\\\":[{\\\"featureId\\\":\\\"PAYMENT\\\",\\\"status\\\":\\\"STATUS_BIND\\\"},{\\\"featureId\\\":\\\"CITY_SIGHTSEEING\\\",\\\"status\\\":\\\"STATUS_BIND\\\"},{\\\"featureId\\\":\\\"QUICK_MODE_V2\\\",\\\"status\\\":\\\"STATUS_UNBIND\\\"}],\\\"success\\\":true,\\\"verifyMethodStatus\\\":[{\\\"VERIFY_IRIS\\\":\\\"CLOSE\\\"},{\\\"VERIFY_VOICE\\\":\\\"OPEN\\\"}]}\",\"traceId\":\"$traceId\",\"type\":\"PaySDK\"}"""
+                            val bindResp = QwenFramer.wrap(
+                                bindPayload.toByteArray(Charsets.UTF_8),
+                                flag = 0x04,
+                                nameSpace = 0x13,
+                                cmdId = 0x01
+                            )
+                            LogCollector.r("←回复 PaySDK 绑定状态成功 (bindStatus: BINDED)")
+                            onGcspControl(bindResp)
+                        }
+                    } else if (jsonStart >= 8 && nsByte == 0x16.toByte() && cmdByte == 0x02.toByte()) {
                         val resp = QwenFramer.wrapResponse(
                             """{"code":0}""",
                             msgId = frame[5].toInt() and 0xFF,

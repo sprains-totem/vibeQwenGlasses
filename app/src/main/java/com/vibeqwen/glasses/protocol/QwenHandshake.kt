@@ -87,7 +87,11 @@ class QwenHandshake(
                 send(QwenCommands.snAuth(deviceSn))
                 delay(40)
 
-                // 7) 手机下发 attach_success 通知眼镜挂载完成（官方抓包证实）
+                // 6.5) 官方抓包 Packet #868 对齐：下发 type: 1103 UUID 注册
+                send("""{"type":1103,"arg1":1,"arg2":0,"data":"${QwenConstants.DEVICE_UUID}"}""")
+                delay(30)
+
+                // 7) 手机下发 attach_success 通知眼镜挂载完成（官方抓包证实 Packet #869）
                 _state.value = HandshakeState.WAIT_ATTACH
                 send(QwenCommands.attachSuccess())
                 delay(30)
