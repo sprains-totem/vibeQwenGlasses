@@ -27,6 +27,8 @@ data class GlassesEvent(
     val recordDurationMs: Long? = null,
     val battery: Int? = null,
     val sessionId: Long? = null,
+    val inputType: Int? = null,
+    val inputTypeName: String? = null,
 )
 
 enum class EventKind {
@@ -40,6 +42,8 @@ enum class EventKind {
     RECORD_END,          // power-state record_end
     RECORD_STATUS,       // AudioRecording status: Running/TryExit/Exiting/Exited
     RECORD_TELEMETRY,    // AudioRecording onHandler 遥测（recordDataSent）
+    BATTERY_STATUS,      // 电池电量状态上报 (fusion_level/quantity)
+    INPUT_EVENT,         // 物理按键与触控事件 (type: 106, 75, 78等)
     HEARTBEAT,           // 心跳/同步状态
     DEVICE_PROPS,        // ro.product.* 属性
     TASK_LAYER,          // taskLayer 当前任务变更（含 code:AudioRecording）
@@ -136,6 +140,34 @@ object QwenEvents {
             if (eventName == null && curCode == "AudioRecording") {
                 return GlassesEvent(EventKind.TASK_LAYER, raw, eventType = eventType)
             }
+        }
+
+        // ── 电池电量状态上报 ──
+        if (eventType == "battery" && eventName == "battery_status") {
+            val fusionLevel = contextInfo?.get("fusion_level")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            val level = contextInfo?.get("level")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            return GlassesEvent(
+                EventKind.BATTERY_STATUS, raw, eventType = eventType, eventName = eventName,
+                battery = fusionLevel ?: level
+            )
+        }
+        if (obj["identifier"]?.jsonPrimitive?.contentOrNull == "power") {
+            val quantity = obj["value"]?.jsonObject?.get("quantity")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            if (quantity != null) {
+                return GlassesEvent(
+                    EventKind.BATTERY_STATUS, raw, battery = quantity
+                )
+            }
+        }
+
+        // ── 输入按键/触控事件 (电源键单击106, 单指长按75, 多指长按78) ──
+        if (eventType == "input" && (eventName == "event" || eventName == "handle")) {
+            val type = contextInfo?.get("type")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+            val typeName = contextInfo?.get("typeName")?.jsonPrimitive?.contentOrNull
+            return GlassesEvent(
+                EventKind.INPUT_EVENT, raw, eventType = eventType, eventName = eventName,
+                inputType = type, inputTypeName = typeName
+            )
         }
 
         // ── 录音遥测（AudioRecording / onHandler / recordDataSent） ──

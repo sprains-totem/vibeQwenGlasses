@@ -212,6 +212,14 @@ private fun ConnectionStatusCard(state: ServiceUiState) {
                     style = MaterialTheme.typography.titleMedium,
                     color = tint,
                 )
+                state.battery?.let { bat ->
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "$bat%",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
                 Spacer(Modifier.weight(1f))
                 Text(
                     "v${com.vibeqwen.glasses.BuildConfig.VERSION_NAME}",

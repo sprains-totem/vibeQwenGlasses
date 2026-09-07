@@ -93,6 +93,7 @@ class GlassesConnectionService : Service() {
     private var recordStartMs = 0L
     private var userStoppedCooldownUntil = 0L
     private var glassesGestureTriggered = false
+    private var currentBattery = 80
 
     fun transport(): ClassicBtTransport? = transport
 
@@ -316,7 +317,38 @@ class GlassesConnectionService : Service() {
             }
         }
 
-        when (val ev = QwenEvents.parse(text).kind) {
+        val ev = QwenEvents.parse(text)
+        when (ev.kind) {
+            EventKind.BATTERY_STATUS -> {
+                val bat = ev.battery
+                if (bat != null && bat > 0) {
+                    currentBattery = bat
+                    publish { it.copy(battery = bat) }
+                    com.vibeqwen.glasses.util.LogCollector.c("★ 收到眼镜电量更新: $bat%")
+                }
+            }
+            EventKind.INPUT_EVENT -> {
+                when (ev.inputType) {
+                    106 -> { // INPUT_EVENT_POWER_KEY_CLICK: 电源键单击
+                        com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜电源键单击 (type: 106)，触发时间与电量原生播报")
+                        announceBatteryAndTime()
+                    }
+                    78 -> { // INPUT_EVENT_MEDIA_MULTI_FINGER_LONG: 多指长按
+                        com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧多指长按手势 (type: 78)")
+                        if (recording) {
+                            com.vibeqwen.glasses.util.LogCollector.r("★ 当前正在录音中，眼镜侧手势联动停止录音")
+                            stopRecording()
+                        } else if (isReady() && System.currentTimeMillis() > userStoppedCooldownUntil) {
+                            com.vibeqwen.glasses.util.LogCollector.r("★ 当前未在录音，眼镜侧手势联动启动录音")
+                            startRecording(auto = true)
+                        }
+                    }
+                    75 -> { // INPUT_EVENT_MEDIA_PRESS_LONG: 单指长按
+                        com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧单指长按语音唤醒 (type: 75)，播报电量与时间")
+                        announceBatteryAndTime()
+                    }
+                }
+            }
             EventKind.RECORD_START -> {
                 Log.i(TAG, "眼镜事件: record_start")
                 // 仅当用户物理在眼镜上执行了手势触发，且不在冷却期内时，才联动自启动
@@ -335,17 +367,44 @@ class GlassesConnectionService : Service() {
                 }
             }
             EventKind.RECORD_STATUS -> {
-                val status = QwenEvents.parse(text)
-                Log.i(TAG, "眼镜事件: AudioRecording status=${status.recordStatus} stop=${status.reasonStop}")
-                // 眼镜侧结束录音（reasonStop=KEY/CLOUD/APP）：本地自动封口保存
-                if (status.recordStatus == "Exited" && recording) {
-                    finalizeRecording("眼镜侧结束录音")
+                Log.i(TAG, "眼镜事件: AudioRecording status=${ev.recordStatus} stop=${ev.reasonStop}")
+                // 眼镜侧按键主动结束录音（status=TryExit/Exited，reasonStop=KEY/CLOUD/APP）
+                if ((ev.recordStatus == "TryExit" || ev.recordStatus == "Exited") && recording) {
+                    val stopReason = if (ev.reasonStop == "KEY") "眼镜端按键结束录音" else "眼镜侧结束录音(${ev.reasonStop})"
+                    finalizeRecording(stopReason)
                 }
                 // 注意：绝不可在 status=Running 时反向自启动录音，Running 是眼镜内部状态确认，而非用户触发指令！
             }
             EventKind.RECORD_TELEMETRY -> Unit
             EventKind.HEARTBEAT -> publishHeartbeat()
             else -> Unit
+        }
+    }
+
+    /**
+     * 电源键触发：原生语音播报当前时间与电量 (官方抓包 Packet #36676 / #36677 对齐)
+     */
+    private fun announceBatteryAndTime() {
+        scope.launch(Dispatchers.IO) {
+            val cal = java.util.Calendar.getInstance()
+            val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+            val minute = cal.get(java.util.Calendar.MINUTE)
+            val period = if (hour < 12) "上午" else if (hour < 18) "下午" else "晚上"
+            val displayHour = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
+            val minuteStr = if (minute == 0) "整" else "%d分".format(minute)
+            val bat = currentBattery.takeIf { it > 0 } ?: 80
+            val text = "现在是$period${displayHour}点$minuteStr，眼镜电量剩余百分之$bat"
+            com.vibeqwen.glasses.util.LogCollector.r("★ 电源键触发原生播报: $text")
+
+            val cmd = com.vibeqwen.glasses.protocol.QwenCommands.speakText(text)
+            // 官方双通道分发：先向 ns=0x0D cmd=0x0B 发送，再向 ns=0x0E cmd=0x01 发送
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                cmd.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0D, cmdId = 0x0B
+            ))
+            delay(30)
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                cmd.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
+            ))
         }
     }
 

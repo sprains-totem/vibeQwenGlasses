@@ -229,6 +229,13 @@ object QwenCommands {
         return listOf(j1, j2, j3)
     }
 
+    /**
+     * 语音播报文本 (TTS): 让眼镜通过本地原生语音合成播报文字 (抓包 Packet #36676 / #36677 对齐)
+     */
+    fun speakText(text: String): String {
+        return """{"type":1011,"arg1":1,"arg2":0,"data":"$text"}"""
+    }
+
     /** 供测试使用：解析 JSON 校验（避免测试里重复写解析逻辑） */
     val json = Json { ignoreUnknownKeys = true }
 }

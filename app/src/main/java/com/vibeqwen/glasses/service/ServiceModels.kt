@@ -16,6 +16,7 @@ data class ServiceUiState(
     val db: Float = -100f,
     val frames: Long = 0,
     val lastError: String? = null,
+    val battery: Int? = null,
 )
 
 /** 服务状态总线（单例，Activity/ViewModel 直接观察） */
