@@ -404,6 +404,7 @@ class GlassesConnectionService : Service() {
 
     /**
      * 电源键触发：系统 TTS 语音播报当前时间与电量 (经 A2DP 蓝牙耳机通路或手机外放播放)
+     * 同时下发官方实测 5 条 MediaFocus / TTS 握手序列，告知眼镜音频焦点就绪，彻底避免眼镜超时报“手机网络问题”！
      */
     private fun announceBatteryAndTime() {
         val cal = java.util.Calendar.getInstance()
@@ -412,12 +413,40 @@ class GlassesConnectionService : Service() {
         val period = if (hour < 12) "上午" else if (hour < 18) "下午" else "晚上"
         val displayHour = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
         val minuteStr = if (minute == 0) "整" else "%d分".format(minute)
-        val bat = currentBattery.takeIf { it > 0 } ?: 80
+        val bat = currentBattery.takeIf { it > 0 } ?: 70
         val text = "现在是$period${displayHour}点$minuteStr，眼镜电量剩余百分之$bat"
         com.vibeqwen.glasses.util.LogCollector.r("★ 触发语音播报: $text")
 
-        // 仅通过系统语音引擎朗读（经由 A2DP 蓝牙耳机通路传至镜腿外放，或切至手机外放）
-        // 绝对不下发假云端 ASR 对话指令 (如 type 1011)，否则眼镜等待云端会话超时会触发“手机网络好像有点问题”！
+        val sid = ((System.currentTimeMillis() / 1000) % 10000000).toInt()
+        scope.launch(Dispatchers.IO) {
+            // 官方抓包 Packet 36280~36295 严格对齐：按键后立即下发 5 条音频焦点握手帧
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                """{"type":1104,"arg1":702,"arg2":0}""".toByteArray(Charsets.UTF_8),
+                flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
+            ))
+            delay(30)
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                """{"type":22,"arg1":1,"arg2":2,"data":"com.alibaba.ailabs.genie.gms"}""".toByteArray(Charsets.UTF_8),
+                flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
+            ))
+            delay(30)
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                """{"type":10,"arg1":12,"arg2":$sid,"data":"{\"forcePlay\":false,\"needLight\":false,\"sessionId\":$sid,\"ttsId\":$sid}"}""".toByteArray(Charsets.UTF_8),
+                flag = 0x24, nameSpace = 0x0D, cmdId = 0x0C
+            ))
+            delay(30)
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                """{"type":10,"arg1":12,"arg2":$sid,"data":"{\"forcePlay\":false,\"needLight\":false,\"sessionId\":$sid,\"ttsId\":$sid}"}""".toByteArray(Charsets.UTF_8),
+                flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
+            ))
+            delay(30)
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                """{"type":17,"arg1":12,"arg2":$sid}""".toByteArray(Charsets.UTF_8),
+                flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
+            ))
+        }
+
+        // 手机端系统语音引擎朗读（经由 A2DP 蓝牙耳机通路传至镜腿外放，或切至手机外放）
         scope.launch(Dispatchers.Main) {
             tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "qwen_tts_${System.currentTimeMillis()}")
         }
@@ -479,16 +508,17 @@ class GlassesConnectionService : Service() {
             p.start(recordStartMs)
         }
 
-        // 下发官方实测 100% 真实起流序列（官方 App 2026-09-07 10:31 抓包 Packet 50512~50514 权威对齐）
+        // 下发官方实测 100% 真实起流序列（官方 App 实测抓包 Packet 37819~37823 权威对齐）
         val ts = System.currentTimeMillis()
-        val sessionIdStr = (ts / 1000).toString()
+        val sessionIdInt = ((ts / 1000) % 10000000).toInt()
         val hex32 = com.vibeqwen.glasses.protocol.QwenCommands.randomHex32()
         val taskLinkId = "AudioRecording$ts$hex32"
+        val traceId = "21508e22${ts}33521d0faa"
 
-        // 官方唯一下发的 3 条起流指令（严禁 dialogId，严格携带 reason: "touch" 与 bizType: "live"）
-        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId","bizType":"live"},"sessionId":"$sessionIdStr"}"""
-        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":"$sessionIdStr","taskLinkId":"$taskLinkId","wakeupType":"longRecord"}"""
-        val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":"$sessionIdStr","uri":"airecord://start"}"""
+        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId","bizType":"live"},"sessionId":$sessionIdInt,"traceId":"$traceId"}"""
+        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":$sessionIdInt,"taskLinkId":"$taskLinkId","traceId":"$traceId","wakeupType":"longRecord"}"""
+        val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":$sessionIdInt,"traceId":"$traceId","uri":"airecord://start"}"""
+        val j5 = """{"type":4,"arg1":$sessionIdInt,"arg2":0}"""
 
         scope.launch(Dispatchers.IO) {
             if (transport?.isAudioConnected != true) {
@@ -502,21 +532,36 @@ class GlassesConnectionService : Service() {
                 delay(120)
             }
 
-            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording (ns=0x0F, cmd=0x01, flag=0x04)")
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                j1.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0F, cmdId = 0x01
-            ))
-            delay(40)
+            // 1. 硬件使能硬开关 (0x2D, 0x1A) - 恒玄芯片开启双麦 ADC 物理推流
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音硬件使能 (0x2D, 0x1A)")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.hardwareRecordTrigger(0x0372))
+            delay(30)
 
+            // 2. J1 (ns=0x0F, cmd=0x01)
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording (ns=0x0F, cmd=0x01, flag=0x24)")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                j1.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0F, cmdId = 0x01
+            ))
+            delay(30)
+
+            // 3. J2 (ns=0x0D, cmd=0x03)
             com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 2: scene=AudioRecording (ns=0x0D, cmd=0x03, flag=0x24)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j2.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0D, cmdId = 0x03
             ))
-            delay(40)
+            delay(30)
 
+            // 4. J3 (ns=0x0D, cmd=0x01)
             com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 3: SCHEME_AIRECORD_START (ns=0x0D, cmd=0x01, flag=0x24)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j3.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0D, cmdId = 0x01
+            ))
+            delay(30)
+
+            // 5. J5 (type: 4, arg1: sessionId, arg2: 0)
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 5: type=4 sessionId (ns=0x0E, cmd=0x01, flag=0x24)")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                j5.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
         }
 
@@ -533,9 +578,9 @@ class GlassesConnectionService : Service() {
         userStoppedCooldownUntil = System.currentTimeMillis() + 8000L // 8秒内严格禁止任何自启动重入
         finalizeRecording("用户停止")
 
-        // 官方抓包 Packet 51443/51444 严格对齐的停止注销序列
         val j1 = """{"type":"PART","codeList":["AudioRecording"]}"""
         val j2 = """{"code":"AudioRecording"}"""
+        val j3 = """{"type":4,"arg1":0,"arg2":1}"""
 
         scope.launch(Dispatchers.IO) {
             com.vibeqwen.glasses.util.LogCollector.r("←下发停止指令 1: PART (ns=0x0F, cmd=0x02, flag=0x04)")
@@ -547,6 +592,12 @@ class GlassesConnectionService : Service() {
             com.vibeqwen.glasses.util.LogCollector.r("←下发停止指令 2: AudioRecording (ns=0x0F, cmd=0x0A, flag=0x04)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j2.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0F, cmdId = 0x0A
+            ))
+            delay(30)
+
+            com.vibeqwen.glasses.util.LogCollector.r("←下发停止指令 3: 关闭硬件推流引擎 type=4 arg2=1 (ns=0x0E, cmd=0x01, flag=0x04)")
+            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                j3.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0E, cmdId = 0x01
             ))
         }
     }
