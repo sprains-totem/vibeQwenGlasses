@@ -28,7 +28,8 @@ android {
         "dev"
     }
 
-    val ciRunNumber = 200 + gitCount
+    val envRun = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0
+    val ciRunNumber = maxOf(300 + gitCount, 300 + envRun)
 
     defaultConfig {
         applicationId = "com.vibeqwen.glasses"
