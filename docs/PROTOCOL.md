@@ -135,21 +135,25 @@ val isBinary = (flag and 0x0C) == 0
 
 ### 4.1 录音启动指令序列 (Start Recording Sequence)
 
+千问 G1 眼镜在固件层区分了「现场随身触控录音」与「AI助手语音交互」两种完全不同的录音场景。为了获得与官方完全一致的原生**“噔噔”**提示音并避免误入 AI 持续对话，指令必须严格遵循触控长录音规范（携带 `reason: "touch"` 与 `bizType: "live"`，**严禁注入 `dialogId`**）：
+
 ```
 手机                                                            眼镜
  │                                                               │
- │ [1] J1: 业务任务挂载 (Flag 0x24, NS 0x0F, Cmd 0x01)            │
- │     {"code":"AudioRecording","extensions":{"taskLinkId":...}, │
+ │ [1] J1: 触控长录音业务请求 (Flag 0x24, NS 0x0F, Cmd 0x01)       │
+ │     {"code":"AudioRecording","data":{"reason":"touch"},       │
+ │      "extensions":{"taskLinkId":...,"bizType":"live"},        │
  │      "sessionId":8389708,"traceId":"..."}                     │
  ├──────────────────────────────────────────────────────────────▶│
  │                                                               │
- │ [2] J2: 场景激活与唤醒类型声明 (Flag 0x24, NS 0x0D, Cmd 0x03)  │
- │     {"scene":"AudioRecording","sessionId":8389708,           │
- │      "taskLinkId":...,"traceId":...,"wakeupType":"longRecord"}│
+ │ [2] J2: 场景激活与 longRecord 声明 (Flag 0x24, NS 0x0D, Cmd 0x03) │
+ │     {"data":{"reason":"touch"},"scene":"AudioRecording",      │
+ │      "sessionId":8389708,"taskLinkId":...,                    │
+ │      "traceId":...,"wakeupType":"longRecord"}                 │
  ├──────────────────────────────────────────────────────────────▶│
  │                                                               │
- │ [3] J3: 协议跳转与对话绑定 (Flag 0x24, NS 0x0D, Cmd 0x01)     │
- │     {"data":{"dialogId":"..."},                               │
+ │ [3] J3: 协议跳转声明 (Flag 0x24, NS 0x0D, Cmd 0x01)             │
+ │     {"data":{"reason":"touch"},                               │
  │      "pageType":"SCHEME_AIRECORD_START","sessionId":8389708,  │
  │      "traceId":...,"uri":"airecord://start"}                  │
  ├──────────────────────────────────────────────────────────────▶│
@@ -162,6 +166,7 @@ val isBinary = (flag and 0x0C) == 0
  │     {"type":4,"arg1":8389708,"arg2":0}                       │
  ├──────────────────────────────────────────────────────────────▶│
  │                                                               │
+ │ ◀─── 眼镜 GlassPlayer 立即播放本地原生「噔噔」提示音 (index 206) │
  │ ◀─── 眼镜回传 .ogg / sceneContexts (NS 0x16)                  │
  │ ──── 手机立即回复 {"sessionId": 8389708} (Flag 0x14) ────────▶ │
  │ ◀─── 眼镜上报 AudioRecording status="Running" (Flag 0x24)     │
@@ -170,20 +175,27 @@ val isBinary = (flag and 0x0C) == 0
  │ ═══════════════ RFCOMM 16 音频流瞬间喷涌 ════════════════════ │
 ```
 
-> **关键规则与坑点**：
-> 1. `sessionId` 在官方规范中必须为**7位整数数值**（如 `8389708`），严禁传为字符串，否则底层引擎判定参数格式错误！
-> 2. `wakeupType` 必须设定为 `"longRecord"`；
-> 3. 指令 4 为硬件寄存器使能帧（Opcode `0x2D`, SubCmd `0x1A`），缺发此帧眼镜将报 `GMA_TRANSFER_ERROR` 并自动退出。
+> **关键规则与避坑指南**：
+> 1. **`dialogId` 陷阱**：在纯随身长录音中，**绝对不可注入 `dialogId`**！`dialogId` 是 AI 助手多轮连续对话的标识。一旦附带 `dialogId`，眼镜的 `AiTalkService` 会判定当前处于语音对话的轮次迭代中，导致眼镜跳过长录音的“噔噔”声，转而播放**“语音第二轮等待输入的提示声”**！
+> 2. **`reason: "touch"` 与 `bizType: "live"`**：此二者是指示底层播放器 `GlassPlayer` 触发硬件提示音 `promptPlay (index: 206)` 的必要标记。
+> 3. **`sessionId` 格式**：在官方规范中必须为**7位整数数值**（如 `8389708`），严禁传为字符串，否则底层引擎判定参数格式错误！
+> 4. **指令 4 硬件使能**：Opcode `0x2D`, SubCmd `0x1A` 是恒玄芯片开启双麦 ADC 物理推流的硬开关，缺少此帧眼镜将报 `GMA_TRANSFER_ERROR` 并自动退出。
 
 ### 4.2 录音停止指令序列 (Stop Recording Sequence)
-当用户点击停止录音时，下发 2 条 PART 级封口指令（Packet #48698~#48699 确认）：
+当用户点击停止录音时，下发 3 条完整注销指令（Packet #16248~#16255 权威确认）：
 ```json
 // 指令 1: 退出 AudioRecording 任务部件 (Flag 0x04, NS 0x0F, Cmd 0x02)
 {"type":"PART","codeList":["AudioRecording"]}
 
 // 指令 2: 确认任务注销 (Flag 0x04, NS 0x0F, Cmd 0x0A)
 {"code":"AudioRecording"}
+
+// 指令 3: 显式释放硬件音频推流管线 (Flag 0x04, NS 0x0E, Cmd 0x01)
+{"type":4,"arg1":0,"arg2":1}
 ```
+
+> **停止阶段关键点**：
+> - **指令 3 (`type:4, arg2:1`)** 极其关键！若漏发指令 3，眼镜的硬件音频通道处于半关闭悬空态，系统后台的 `AiTalkService` 会趁机接管音频流并反复触发 VAD 唤醒；下发 `arg2:1` 能彻底注销 BES2800 硬件推流引擎，并触发眼镜原生结束提示音，保证停止后绝对静默。
 
 ---
 
