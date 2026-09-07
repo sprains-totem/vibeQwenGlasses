@@ -514,7 +514,10 @@ class GlassesConnectionService : Service() {
      * 向眼镜注入官方全量云端特性表（Packet #870~#916 权威对齐：45个App特性 + 45个Device特性）
      * 解决眼镜反复派发 RetrieveFeatureListFromCloud 以及 CloudCallback result: -1 导致的"手机网络好像有点问题"！
      */
+    private var isSendingCloudFeatures = false
     private fun sendCloudFeatureList() {
+        if (isSendingCloudFeatures) return
+        isSendingCloudFeatures = true
         scope.launch(Dispatchers.IO) {
             try {
                 val jsonBytes = assets.open("official_features.json").use { it.readBytes() }
@@ -534,6 +537,9 @@ class GlassesConnectionService : Service() {
                 com.vibeqwen.glasses.util.LogCollector.c("★ 官方云端特性认证表 (${chunks.size} 分片) 注入成功！驱动眼镜 cloud_auth_done 激活")
             } catch (e: Exception) {
                 com.vibeqwen.glasses.util.LogCollector.e("注入云端特性表失败: ${e.message}")
+            } finally {
+                delay(3000)
+                isSendingCloudFeatures = false
             }
         }
     }
