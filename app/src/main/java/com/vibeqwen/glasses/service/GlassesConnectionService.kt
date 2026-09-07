@@ -405,18 +405,16 @@ class GlassesConnectionService : Service() {
             p.start(recordStartMs)
         }
 
-        // 下发官方实测唯一起流序列（Packet 19364~19368，真机 100% 验证每秒 83.33 帧高密度推流）
+        // 下发官方实测 100% 真实起流序列（官方 App 2026-09-07 10:31 抓包 Packet 50512~50514 权威对齐）
         val ts = System.currentTimeMillis()
-        val sessionIdInt = ((ts / 1000) % 10000000).toInt()
+        val sessionIdStr = (ts / 1000).toString()
         val hex32 = com.vibeqwen.glasses.protocol.QwenCommands.randomHex32()
         val taskLinkId = "AudioRecording$ts$hex32"
-        val traceId = "213fe5af${ts}0005054d0fc5"
 
-        // 彻底移除多轮语音会话 dialogId，保留纯净 touch 触控录音语义
-        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId","bizType":"live"},"sessionId":$sessionIdInt,"traceId":"$traceId"}"""
-        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":$sessionIdInt,"taskLinkId":"$taskLinkId","traceId":"$traceId","wakeupType":"longRecord"}"""
-        val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":$sessionIdInt,"traceId":"$traceId","uri":"airecord://start"}"""
-        val j5 = """{"type":4,"arg1":$sessionIdInt,"arg2":0}"""
+        // 官方唯一下发的 3 条起流指令（严禁 dialogId，严格携带 reason: "touch" 与 bizType: "live"）
+        val j1 = """{"code":"AudioRecording","data":{"reason":"touch"},"extensions":{"taskLinkId":"$taskLinkId","bizType":"live"},"sessionId":"$sessionIdStr"}"""
+        val j2 = """{"data":{"reason":"touch"},"scene":"AudioRecording","sessionId":"$sessionIdStr","taskLinkId":"$taskLinkId","wakeupType":"longRecord"}"""
+        val j3 = """{"data":{"reason":"touch"},"pageType":"SCHEME_AIRECORD_START","sessionId":"$sessionIdStr","uri":"airecord://start"}"""
 
         scope.launch(Dispatchers.IO) {
             if (transport?.isAudioConnected != true) {
@@ -430,9 +428,9 @@ class GlassesConnectionService : Service() {
                 delay(120)
             }
 
-            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording (ns=0x0F, cmd=0x01, flag=0x24)")
+            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 1: AudioRecording (ns=0x0F, cmd=0x01, flag=0x04)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                j1.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0F, cmdId = 0x01
+                j1.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0F, cmdId = 0x01
             ))
             delay(40)
 
@@ -445,16 +443,6 @@ class GlassesConnectionService : Service() {
             com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 3: SCHEME_AIRECORD_START (ns=0x0D, cmd=0x01, flag=0x24)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j3.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0D, cmdId = 0x01
-            ))
-            delay(30)
-
-            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 4: hardwareRecordTrigger (0x2D, 0x1A)")
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.hardwareRecordTrigger(0x0340))
-            delay(30)
-
-            com.vibeqwen.glasses.util.LogCollector.r("←下发录音指令 5: type=4 sessionId (ns=0x0E, cmd=0x01, flag=0x24)")
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                j5.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
             ))
         }
 
@@ -471,10 +459,9 @@ class GlassesConnectionService : Service() {
         userStoppedCooldownUntil = System.currentTimeMillis() + 8000L // 8秒内严格禁止任何自启动重入
         finalizeRecording("用户停止")
 
-        // 官方抓包 Packet 48698/48699 严格确认的停止与注销序列
+        // 官方抓包 Packet 51443/51444 严格对齐的停止注销序列
         val j1 = """{"type":"PART","codeList":["AudioRecording"]}"""
         val j2 = """{"code":"AudioRecording"}"""
-        val j3 = """{"type":4,"arg1":0,"arg2":1}""" // 显式释放 BES2800 硬件音频推流管线
 
         scope.launch(Dispatchers.IO) {
             com.vibeqwen.glasses.util.LogCollector.r("←下发停止指令 1: PART (ns=0x0F, cmd=0x02, flag=0x04)")
@@ -486,12 +473,6 @@ class GlassesConnectionService : Service() {
             com.vibeqwen.glasses.util.LogCollector.r("←下发停止指令 2: AudioRecording (ns=0x0F, cmd=0x0A, flag=0x04)")
             transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
                 j2.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0F, cmdId = 0x0A
-            ))
-            delay(30)
-
-            com.vibeqwen.glasses.util.LogCollector.r("←下发停止指令 3: 关闭硬件推流引擎 type=4 arg2=1 (ns=0x0E, cmd=0x01, flag=0x04)")
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                j3.toByteArray(Charsets.UTF_8), flag = 0x04, nameSpace = 0x0E, cmdId = 0x01
             ))
         }
     }

@@ -81,8 +81,20 @@ class GcspFrameReassembler(
                             val payloadBytes = frameBytes.copyOfRange(8, frameBytes.size)
                             val jsonStr = String(payloadBytes, Charsets.UTF_8).trim()
 
-                            // (B) 官方抓包 Packet 47855/47857 证实：对 ns=0x10/0x16 以及 .ogg 请求立即回 Flag 0x14 会话响应
-                            if (ns == 0x10 || ns == 0x16 || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus")) {
+                            // (B) 官方抓包 Packet 50539/51458 严格对齐：
+                            // ns=0x16 cmd=0x02 (停止确认) 回 Flag 0x14 {"code":0}
+                            // ns=0x10/0x16 cmd=0x01 (.ogg/会话同步) 回 Flag 0x14 {"sessionId":$sid}
+                            if (ns == 0x16 && cmd == 0x02) {
+                                val resp = QwenFramer.wrapResponse(
+                                    """{"code":0}""",
+                                    msgId = msgId,
+                                    nameSpace = ns,
+                                    cmdId = cmd,
+                                    flag = 0x14
+                                )
+                                LogCollector.r("←响应眼镜会话停止确认 (ns=0x16, cmd=0x02, msgId=0x%02X)".format(msgId))
+                                onGcspControl(resp)
+                            } else if (ns == 0x10 || ns == 0x16 || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus")) {
                                 val sid = (System.currentTimeMillis() / 1000).toInt()
                                 val resp = QwenFramer.wrapResponse(
                                     """{"sessionId":$sid}""",
