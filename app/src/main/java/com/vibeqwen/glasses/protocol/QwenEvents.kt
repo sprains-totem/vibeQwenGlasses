@@ -142,7 +142,7 @@ object QwenEvents {
             }
         }
 
-        // ── 电池电量状态上报 ──
+        // ── 电池电量状态上报 (全面支持 battery_status / UpdateDeviceStatus / power / device 数组) ──
         if (eventType == "battery" && eventName == "battery_status") {
             val fusionLevel = contextInfo?.get("fusion_level")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
             val level = contextInfo?.get("level")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
@@ -151,12 +151,13 @@ object QwenEvents {
                 battery = fusionLevel ?: level
             )
         }
-        if (obj["identifier"]?.jsonPrimitive?.contentOrNull == "power") {
-            val quantity = obj["value"]?.jsonObject?.get("quantity")?.jsonPrimitive?.contentOrNull?.toIntOrNull()
-            if (quantity != null) {
-                return GlassesEvent(
-                    EventKind.BATTERY_STATUS, raw, battery = quantity
-                )
+        val batMatch = Regex(""""(?:batteryCapacityLevel|fusion_level|quantity)"\s*:\s*(\d+)""").find(raw)
+        if (batMatch != null && (raw.contains("battery") || raw.contains("power"))) {
+            val batVal = batMatch.groupValues[1].toIntOrNull()
+            if (batVal != null && batVal in 1..100) {
+                if (raw.contains("UpdateDeviceStatus") || raw.contains("battery") || raw.contains("power") || raw.contains("device")) {
+                    return GlassesEvent(EventKind.BATTERY_STATUS, raw, battery = batVal)
+                }
             }
         }
 

@@ -287,8 +287,12 @@ class GlassesConnectionService : Service() {
                 publish { st -> st.copy(connection = ConnectionState.READY, message = "已就绪，可开始录音") }
                 updateNotification()
 
-                // 官方真机抓包确认：控制通道握手就绪后，立即建立经典蓝牙 RFCOMM 16 私有音频通道
                 scope.launch(Dispatchers.IO) {
+                    // 主动查询设备实时电量等信息
+                    transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
+                        com.vibeqwen.glasses.protocol.QwenCommands.queryDevice().toByteArray(),
+                        flag = 0x00, nameSpace = 0x00, cmdId = 0x01
+                    ))
                     delay(300)
                     com.vibeqwen.glasses.util.LogCollector.c("正在建立经典蓝牙私有音频通道 (RFCOMM Channel 16)...")
                     val ok = transport?.openAudioChannel(transportListener) ?: false
@@ -317,14 +321,11 @@ class GlassesConnectionService : Service() {
         // 喂握手状态机（驱动 READY）
         handshake?.onGlassesEvent(text)
 
-        // 自动应答眼镜的状态同步请求 (UpdateDeviceStatus / SynchronizeStatus)
-        if (text.contains("UpdateDeviceStatus") || text.contains("SynchronizeStatus")) {
-            scope.launch {
-                val sid = (System.currentTimeMillis() / 1000).toInt()
-                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson("""{"sessionId":$sid}"""))
-                val resp = com.vibeqwen.glasses.protocol.QwenCommands.updateDeviceStatusResp()
-                com.vibeqwen.glasses.util.LogCollector.h("←回复 UpdateDeviceStatusResp")
-                transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrapJson(resp))
+        // 收到眼镜侧文本意图「打开会议录音」时联动开启录音
+        if (text.contains("打开会议录音")) {
+            com.vibeqwen.glasses.util.LogCollector.r("★ 捕获眼镜侧文本意图「打开会议录音」，触发长录音")
+            if (!recording && isReady() && System.currentTimeMillis() > userStoppedCooldownUntil) {
+                startRecording(auto = true)
             }
         }
 
@@ -402,35 +403,23 @@ class GlassesConnectionService : Service() {
     }
 
     /**
-     * 电源键触发：原生语音播报当前时间与电量 (官方抓包 Packet #36676 / #36677 对齐)
+     * 电源键触发：系统 TTS 语音播报当前时间与电量 (经 A2DP 蓝牙耳机通路或手机外放播放)
      */
     private fun announceBatteryAndTime() {
-        scope.launch(Dispatchers.IO) {
-            val cal = java.util.Calendar.getInstance()
-            val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
-            val minute = cal.get(java.util.Calendar.MINUTE)
-            val period = if (hour < 12) "上午" else if (hour < 18) "下午" else "晚上"
-            val displayHour = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
-            val minuteStr = if (minute == 0) "整" else "%d分".format(minute)
-            val bat = currentBattery.takeIf { it > 0 } ?: 80
-            val text = "现在是$period${displayHour}点$minuteStr，眼镜电量剩余百分之$bat"
-            com.vibeqwen.glasses.util.LogCollector.r("★ 电源键触发原生播报: $text")
+        val cal = java.util.Calendar.getInstance()
+        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+        val minute = cal.get(java.util.Calendar.MINUTE)
+        val period = if (hour < 12) "上午" else if (hour < 18) "下午" else "晚上"
+        val displayHour = if (hour == 0) 12 else if (hour > 12) hour - 12 else hour
+        val minuteStr = if (minute == 0) "整" else "%d分".format(minute)
+        val bat = currentBattery.takeIf { it > 0 } ?: 80
+        val text = "现在是$period${displayHour}点$minuteStr，眼镜电量剩余百分之$bat"
+        com.vibeqwen.glasses.util.LogCollector.r("★ 触发语音播报: $text")
 
-            // 1. 手机端通过系统语音引擎朗读（经由 A2DP 蓝牙耳机通路传至镜腿外放，或切至手机外放）
-            scope.launch(Dispatchers.Main) {
-                tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "qwen_tts_${System.currentTimeMillis()}")
-            }
-
-            // 2. 同时向控制芯片下发官方元数据对齐信令 (指示灯与状态同步)
-            val cmd = com.vibeqwen.glasses.protocol.QwenCommands.speakText(text)
-            // 官方双通道分发：先向 ns=0x0D cmd=0x0B 发送，再向 ns=0x0E cmd=0x01 发送
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                cmd.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0D, cmdId = 0x0B
-            ))
-            delay(30)
-            transport?.write(com.vibeqwen.glasses.protocol.QwenFramer.wrap(
-                cmd.toByteArray(Charsets.UTF_8), flag = 0x24, nameSpace = 0x0E, cmdId = 0x01
-            ))
+        // 仅通过系统语音引擎朗读（经由 A2DP 蓝牙耳机通路传至镜腿外放，或切至手机外放）
+        // 绝对不下发假云端 ASR 对话指令 (如 type 1011)，否则眼镜等待云端会话超时会触发“手机网络好像有点问题”！
+        scope.launch(Dispatchers.Main) {
+            tts?.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "qwen_tts_${System.currentTimeMillis()}")
         }
     }
 

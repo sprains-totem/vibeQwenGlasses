@@ -94,7 +94,7 @@ class GcspFrameReassembler(
                                 )
                                 LogCollector.r("←响应眼镜会话停止确认 (ns=0x16, cmd=0x02, msgId=0x%02X)".format(msgId))
                                 onGcspControl(resp)
-                            } else if (ns == 0x10 || ns == 0x16 || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus")) {
+                            } else if (ns == 0x10 || ns == 0x16 || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus") || jsonStr.contains("AliGenie.Text") || jsonStr.contains("Recognize")) {
                                 val sid = (System.currentTimeMillis() / 1000).toInt()
                                 val resp = QwenFramer.wrapResponse(
                                     """{"sessionId":$sid}""",
@@ -210,20 +210,32 @@ class GcspFrameReassembler(
                     val jsonBytes = frame.copyOfRange(jsonStart, jsonEnd + 1)
                     val jsonStr = String(jsonBytes, Charsets.UTF_8).trim()
 
-                    // 2. 官方抓包 Packet 47855/47857/47859/47861 严格确认：
-                    // 当眼镜发送 SynchronizeStatus (nameSpace=0x10) 或 .ogg/sceneContexts (nameSpace=0x16) 会话请求时，
+                    // 2. 官方抓包 Packet 50539/51458/37385 严格确认：
+                    // 当眼镜发送 SynchronizeStatus (nameSpace=0x10)、.ogg/sceneContexts (nameSpace=0x16)、或 AliGenie.Text.Recognize 时，
                     // 手机必须立即回送携带对应 msgId/namespace/cmdId 的 flag=0x14 响应帧，
-                    // 否则眼镜判定与手机网络失联、停止推流并播报“手机网络可能存在问题”
-                    if (jsonStart >= 8 && (frame[6] == 0x10.toByte() || frame[6] == 0x16.toByte() || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus"))) {
+                    // 否则眼镜判定与手机网络失联、停止推流并播报“手机网络好像有点问题，请检查”
+                    val nsByte = if (frame.size >= 8) frame[6] else 0.toByte()
+                    val cmdByte = if (frame.size >= 8) frame[7] else 0.toByte()
+                    if (jsonStart >= 8 && nsByte == 0x16.toByte() && cmdByte == 0x02.toByte()) {
+                        val resp = QwenFramer.wrapResponse(
+                            """{"code":0}""",
+                            msgId = frame[5].toInt() and 0xFF,
+                            nameSpace = 0x16,
+                            cmdId = 0x02,
+                            flag = 0x14
+                        )
+                        LogCollector.r("←响应眼镜会话停止确认 (ns=0x16, cmd=0x02, msgId=0x%02X)".format(frame[5]))
+                        onGcspControl(resp)
+                    } else if (jsonStart >= 8 && (nsByte == 0x10.toByte() || nsByte == 0x16.toByte() || jsonStr.contains(".ogg") || jsonStr.contains("sceneContexts") || jsonStr.contains("SynchronizeStatus") || jsonStr.contains("AliGenie.Text") || jsonStr.contains("Recognize"))) {
                         val sid = (System.currentTimeMillis() / 1000).toInt()
                         val resp = QwenFramer.wrapResponse(
                             """{"sessionId":$sid}""",
                             msgId = frame[5].toInt() and 0xFF,
-                            nameSpace = frame[6].toInt() and 0xFF,
-                            cmdId = frame[7].toInt() and 0xFF,
+                            nameSpace = nsByte.toInt() and 0xFF,
+                            cmdId = cmdByte.toInt() and 0xFF,
                             flag = 0x14
                         )
-                        LogCollector.r("←响应眼镜推流会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(frame[6], frame[5], sid))
+                        LogCollector.r("←响应眼镜推流/文本会话请求 (ns=0x%02X, msgId=0x%02X, sid=%d)".format(nsByte, frame[5], sid))
                         onGcspControl(resp)
                     }
 
